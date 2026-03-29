@@ -13,7 +13,7 @@ A lightweight, privacy-focused Python tool that monitors your blink rate via web
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/blink-reminder.git
+   git clone https://github.com/valkozin/blink-reminder.git
    cd blink-reminder
    ```
 
