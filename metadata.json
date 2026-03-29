@@ -1,0 +1,7 @@
+{
+  "name": "Blink Reminder",
+  "description": "A privacy-focused, offline-capable tool that monitors your blink rate and gently reminds you to blink to prevent eye strain.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
