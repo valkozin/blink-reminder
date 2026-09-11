@@ -69,6 +69,33 @@ def test_is_running_follows_the_instance_lock():
     assert control.is_running() is False
 
 
+def test_a_pause_is_remembered_across_a_restart():
+    import time
+
+    _isolate()
+    assert control.load_pause() == (False, None)
+
+    control.save_pause(None)                       # "until I say otherwise"
+    assert control.load_pause() == (True, None)
+
+    deadline = time.time() + 600
+    control.save_pause(deadline)
+    paused, until = control.load_pause()
+    assert paused and abs(until - deadline) < 1
+
+    control.clear_pause()
+    assert control.load_pause() == (False, None)
+
+
+def test_a_pause_that_has_already_expired_is_dropped():
+    import time
+
+    _isolate()
+    control.save_pause(time.time() - 1)
+    assert control.load_pause() == (False, None), "waking up should not restore a lapsed pause"
+    assert not control.PAUSE_PATH.exists(), "and the stale file is cleaned up"
+
+
 def test_state_round_trip():
     _isolate()
     assert control.read_state() is None

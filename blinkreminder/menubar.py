@@ -400,6 +400,8 @@ class BlinkReminderApp(rumps.App):
             self.detector.resume()
         elif command == "toggle":
             self.detector.toggle_pause()
+        elif command == "reload":
+            self._reload_config()
 
     def _menu_bar_report(self) -> dict:
         """Where the status item actually is - an icon can be missing for reasons that
@@ -434,6 +436,20 @@ class BlinkReminderApp(rumps.App):
         except Exception as exc:  # pragma: no cover - diagnostics must never break the app
             report["error"] = f"{type(exc).__name__}: {exc}"
         return report
+
+    def _reload_config(self) -> None:
+        """Re-read the settings file in place.
+
+        The detector holds the same Config object, so the fields are updated rather
+        than the object replaced - otherwise half the app would keep the old settings.
+        """
+        from dataclasses import fields
+
+        fresh = Config.load()
+        for field in fields(Config):
+            setattr(self.config, field.name, getattr(fresh, field.name))
+        self._refresh_checkmarks()
+        self._tick()
 
     def _publish_state(self, snap) -> None:
         """A snapshot on disk, so the app can be inspected without its menu."""

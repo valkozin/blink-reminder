@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from .config import Config
-from . import system
+from . import control, system
 
 log = logging.getLogger(__name__)
 
@@ -163,6 +163,14 @@ class BlinkDetector:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        paused, until = control.load_pause()
+        if paused:
+            with self._lock:
+                self._paused = True
+                self._paused_until = until
+            self._state = State.PAUSED
+            log.info("still paused from before the restart%s",
+                     f" until {time.strftime('%H:%M', time.localtime(until))}" if until else "")
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="blink-detector", daemon=True)
         self._thread.start()
@@ -181,21 +189,33 @@ class BlinkDetector:
 
     @property
     def paused(self) -> bool:
+        expired = False
         with self._lock:
             if self._paused_until is not None and time.time() >= self._paused_until:
                 self._paused_until = None
                 self._paused = False
-            return self._paused
+                expired = True
+            value = self._paused
+        if expired:
+            control.clear_pause()
+        return value
 
     def pause(self, seconds: Optional[float] = None) -> None:
         with self._lock:
             self._paused = True
             self._paused_until = time.time() + seconds if seconds else None
+            deadline = self._paused_until
+        control.save_pause(deadline)
+        # Say so at once. The camera loop agrees within a second, but a person who has
+        # just clicked Pause should not watch the icon carry on as if nothing happened.
+        self._state = State.PAUSED
 
     def resume(self) -> None:
         with self._lock:
             self._paused = False
             self._paused_until = None
+        control.clear_pause()
+        self._state = State.STARTING
         self._reset_timers()
 
     def toggle_pause(self) -> bool:
@@ -221,6 +241,10 @@ class BlinkDetector:
     def snapshot(self, now: Optional[float] = None) -> Snapshot:
         """`now` is only passed by tests, which drive their own clock."""
         now = time.monotonic() if now is None else now
+        # Pausing is the one piece of state a person sets directly, so it is read from
+        # the flag they set rather than from whatever the camera loop last wrote.
+        paused = self.paused
+        state = State.PAUSED if paused else self._state
         self._trim_blink_times(now)
         rate: Optional[float] = None
         if self._active_seconds >= 25.0:
@@ -231,7 +255,7 @@ class BlinkDetector:
         if self._last_reminder:
             hold = max(0.0, self.config.min_reminder_gap - (now - self._last_reminder))
         return Snapshot(
-            state=self._state,
+            state=state,
             blinks=self._blinks,
             reminders=self._reminders,
             rate=rate,

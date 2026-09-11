@@ -21,9 +21,10 @@ log = logging.getLogger(__name__)
 
 COMMAND_PATH = CONFIG_DIR / "command"
 STATE_PATH = CONFIG_DIR / "state.json"
+PAUSE_PATH = CONFIG_DIR / "pause.json"
 LOCK_PATH = CONFIG_DIR / "running.lock"
 
-VALID_COMMANDS = ("quit", "pause", "resume", "toggle")
+VALID_COMMANDS = ("quit", "pause", "resume", "toggle", "reload")
 
 
 def is_running() -> bool:
@@ -99,3 +100,38 @@ def read_state() -> Optional[dict]:
     except (OSError, ValueError):
         return None
     return state if isinstance(state, dict) else None
+
+
+# --- a pause outlives the process ---------------------------------------
+# Restarts happen for reasons that have nothing to do with the person: a crash, a
+# login, an update. Forgetting that they asked for quiet and starting to chirp again
+# is the one behaviour a pause must never have.
+
+
+def save_pause(until: Optional[float]) -> None:
+    """`until` is a wall-clock deadline, or None for "until I say otherwise"."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = PAUSE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"until": until}), encoding="utf-8")
+        os.replace(tmp, PAUSE_PATH)
+    except OSError as exc:
+        log.warning("could not remember the pause: %s", exc)
+
+
+def clear_pause() -> None:
+    PAUSE_PATH.unlink(missing_ok=True)
+
+
+def load_pause() -> tuple[bool, Optional[float]]:
+    """Returns (paused, deadline). An expired pause clears itself."""
+    try:
+        data = json.loads(PAUSE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False, None
+    until = data.get("until") if isinstance(data, dict) else None
+    if until is not None:
+        if not isinstance(until, (int, float)) or until <= time.time():
+            clear_pause()
+            return False, None
+    return True, until

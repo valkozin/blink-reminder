@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -10,8 +11,17 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import blinkreminder.control as control_module
 from blinkreminder.config import Config
 from blinkreminder.detector import CALIBRATION_SAMPLES, BlinkDetector, State
+
+# Never let a test touch the real app's runtime files.
+_SANDBOX = Path(tempfile.mkdtemp())
+control_module.CONFIG_DIR = _SANDBOX
+control_module.COMMAND_PATH = _SANDBOX / "command"
+control_module.STATE_PATH = _SANDBOX / "state.json"
+control_module.LOCK_PATH = _SANDBOX / "running.lock"
+control_module.PAUSE_PATH = _SANDBOX / "pause.json"
 
 FRAME = np.zeros((480, 480, 3), dtype=np.uint8)  # square, so the EAR aspect fix is a no-op
 FAKE_START = 1000.0

@@ -67,7 +67,7 @@ Click the eye in the menu bar:
 |---|---|
 | *Watching your blinks* | Current state, and the blink rate over the last minute (15–20/min is healthy) or a warning that blinks are barely visible |
 | *No blink for 4 s of 12* | What the app is waiting for right now, counting live — including the quiet period after a reminder |
-| **Pause / Resume** | Stops the reminders and closes the camera |
+| **Pause / Resume** | Stops the reminders and closes the camera; survives a restart |
 | **Pause for…** | 15, 30 or 60 minutes, then it resumes by itself |
 | **Remind after…** | 6–30 seconds without a blink (default: 12) |
 | **Sound** | Eight short system sounds, volume, or silent |
@@ -146,7 +146,12 @@ blink-reminder --pause 30   # or --pause for no time limit
 blink-reminder --resume
 blink-reminder --quit       # stops it; it returns at your next login
 blink-reminder --start      # start it again without logging out
+blink-reminder --menubar none|rate|count   # narrow the icon, or put the counter back
 ```
+
+A pause is remembered on disk, so a crash, an update or a login does not quietly cancel it —
+the remaining time is restored too. Settings changed from the terminal are applied to the
+running app straight away; there is nothing to restart.
 
 To get the icon back on a crowded menu bar: hold ⌘ and drag icons to reorder them, so this one
 sits to the left of whatever is being cut off, or set **Next to the menu bar icon** to *Nothing*

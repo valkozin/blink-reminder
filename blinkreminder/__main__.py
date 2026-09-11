@@ -81,6 +81,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--resume", action="store_true", help="resume the running app")
     parser.add_argument("--start", action="store_true", help="start the background app again")
+    parser.add_argument(
+        "--menubar",
+        choices=("none", "rate", "count"),
+        help="what sits beside the menu bar icon (use when the menu itself is unreachable)",
+    )
     parser.add_argument("--interval", type=float, help="seconds without a blink before reminding")
     parser.add_argument("--sound", choices=AVAILABLE_SOUNDS, help="reminder sound")
     parser.add_argument("--no-sound", action="store_true", help="mute the reminder sound")
@@ -143,6 +148,16 @@ def _run_control(args: argparse.Namespace) -> Optional[int]:
             print("  menu bar icon       : not placed by macOS")
         if age > 30:
             print(f"  (this reading is {age:.0f}s old)")
+        return 0
+
+    if args.menubar:
+        config = Config.load()
+        config.menubar_extra = args.menubar
+        config.save()
+        print(f"Menu bar extra set to {args.menubar}.")
+        if control.is_running():
+            control.send("reload")
+            print("Applied to the running app.")
         return 0
 
     if args.start:
