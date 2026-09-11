@@ -30,6 +30,7 @@ ICONS = {
 SENSITIVITY_LEVELS = (("sensitivity_low", 0.74), ("sensitivity_normal", 0.82), ("sensitivity_high", 0.88))
 VOLUME_LEVELS = (15, 25, 35, 50, 75, 100)
 SNOOZE_CHOICES = (("snooze_15", 15), ("snooze_30", 30), ("snooze_60", 60))
+MENUBAR_CHOICES = (("menubar_none", "none"), ("menubar_rate", "rate"), ("menubar_count", "count"))
 UNSEEN_ICON = "🙈"
 UNUSABLE_ICON = "🙈"
 
@@ -97,7 +98,12 @@ class BlinkReminderApp(rumps.App):
         sound.add(volume)
 
         self.hud_item = rumps.MenuItem(t("hud"), callback=self.on_toggle_hud)
-        self.rate_in_bar_item = rumps.MenuItem(t("show_rate"), callback=self.on_toggle_rate_in_bar)
+        menubar_extra = rumps.MenuItem(t("menubar_extra"))
+        self.menubar_extra_items = {}
+        for key, value in MENUBAR_CHOICES:
+            item = rumps.MenuItem(t(key), callback=self._menubar_extra_callback(value))
+            self.menubar_extra_items[value] = item
+            menubar_extra.add(item)
 
         sensitivity = rumps.MenuItem(t("sensitivity"))
         self.sensitivity_items = {}
@@ -129,7 +135,7 @@ class BlinkReminderApp(rumps.App):
             interval,
             sound,
             self.hud_item,
-            self.rate_in_bar_item,
+            menubar_extra,
             sensitivity,
             camera,
             None,
@@ -156,7 +162,8 @@ class BlinkReminderApp(rumps.App):
         for value, item in self.sensitivity_items.items():
             item.state = int(abs(self.config.sensitivity - value) < 0.01)
         self.hud_item.state = int(self.config.hud_enabled)
-        self.rate_in_bar_item.state = int(self.config.show_rate_in_menubar)
+        for value, item in self.menubar_extra_items.items():
+            item.state = int(value == self.config.menubar_extra)
         for index, item in self.camera_items.items():
             item.state = int(index == self.config.camera_index)
         self.idle_item.state = int(self.config.pause_when_idle)
@@ -246,10 +253,13 @@ class BlinkReminderApp(rumps.App):
         if jpeg:
             self._preview.update(jpeg)
 
-    def on_toggle_rate_in_bar(self, _=None) -> None:
-        self.config.show_rate_in_menubar = not self.config.show_rate_in_menubar
-        self._save()
-        self._tick()
+    def _menubar_extra_callback(self, value: str):
+        def handler(_=None) -> None:
+            self.config.menubar_extra = value
+            self._save()
+            self._tick()
+
+        return handler
 
     def on_toggle_idle(self, _=None) -> None:
         self.config.pause_when_idle = not self.config.pause_when_idle
@@ -329,7 +339,12 @@ class BlinkReminderApp(rumps.App):
             rumps.alert(title=t("unseen_title"), message=t("unseen_body"), ok="OK")
         elif not snap.unseen_at_keyboard and snap.seconds_since_face < 5:
             self._unseen_warned_at = 0.0
-        if self.config.show_rate_in_menubar and snap.rate is not None and snap.state == State.ACTIVE:
+        extra = self.config.menubar_extra
+        if extra == "count":
+            # A number that ticks up the moment you blink - the quickest way to tell
+            # whether the camera is actually seeing you.
+            self.title = f"{icon} {snap.blinks}"
+        elif extra == "rate" and snap.rate is not None and snap.state == State.ACTIVE:
             self.title = f"{icon} {snap.rate:g}"
         else:
             self.title = icon
@@ -338,9 +353,9 @@ class BlinkReminderApp(rumps.App):
         if snap.signal_quality == "weak":
             self.rate_item.title = t("signal_weak")
         elif snap.rate is not None:
-            self.rate_item.title = t("rate", rate=f"{snap.rate:g}")
+            self.rate_item.title = t("rate_total", rate=f"{snap.rate:g}", total=snap.blinks)
         else:
-            self.rate_item.title = t("rate_unknown")
+            self.rate_item.title = t("rate_unknown_total", total=snap.blinks)
         self.pause_item.title = t("resume") if self.detector.paused else t("pause")
         self._flush_stats()
 

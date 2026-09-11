@@ -66,7 +66,8 @@ Click the eye in the menu bar:
 | **Sound** | Eight short system sounds, volume, or silent |
 | **Show on-screen hint** | The floating hint, on or off |
 | **Detection sensitivity** | Raise it if light blinks are missed, lower it if squinting is counted |
-| **Camera** | Pick a camera, or open **Check camera framing…** to aim it |
+| **Camera** | Pick a camera, or open **Check camera framing…** to aim it and watch blinks register |
+| **Next to the menu bar icon** | Nothing, the blink rate, or a live blink counter |
 | **Pause when keyboard is idle** | Off by default — reading without touching the keyboard still counts as screen time |
 | **Pause when screen is locked** | On by default |
 | **Start at login** | Installs/removes the launchd agent |
@@ -92,6 +93,13 @@ keyboard the app says so outright.
 Open **Camera › Check camera framing…** and move the camera (or yourself) until the border
 around the preview turns green and dots appear on your eyes. That preview keeps running even
 while the app is paused, so you can aim it whenever.
+
+The window also shows the detection as it happens: a counter in the corner, the live EAR
+against the blink threshold on a bar at the bottom, and a green flash reading `BLINK -47%` each
+time one is registered. That percentage is the useful number — a well-aimed camera puts real
+blinks at 35–60% below the baseline, and if yours only ever reach 10–20%, move the camera
+rather than the sensitivity slider. For a permanent check without opening anything, set
+**Next to the menu bar icon** to the blink counter and watch it tick up as you blink.
 
 ### If the reminders feel wrong
 

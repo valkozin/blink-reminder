@@ -26,7 +26,7 @@ AVAILABLE_SOUNDS = ("Tink", "Pop", "Purr", "Bottle", "Morse", "Submarine", "Glas
 INTERVAL_CHOICES = (6, 8, 10, 12, 15, 20, 30)
 
 
-SCHEMA_VERSION = 2  # bump when the detection defaults below are retuned
+SCHEMA_VERSION = 3  # bump when the detection defaults below are retuned
 
 
 @dataclass
@@ -66,7 +66,7 @@ class Config:
 
     # --- interface ---
     language: str = "auto"          # auto | en | ru
-    show_rate_in_menubar: bool = False
+    menubar_extra: str = "none"     # none | rate | count - what sits beside the icon
 
     def save(self) -> None:
         try:
@@ -97,22 +97,23 @@ class Config:
                 setattr(cfg, key, value)
             except Exception:  # pragma: no cover - defensive
                 log.warning("ignoring bad config value for %s", key)
-        cfg.migrate(file_version)
+        cfg.migrate(file_version, raw)
         cfg.clamp()
         return cfg
 
-    def migrate(self, file_version: int) -> None:
-        """Carry user choices forward, but let retuned engine defaults take effect.
-
-        fps has never been in the menu, and a sensitivity still sitting on the old
-        default was never chosen by anyone - both should follow the new tuning.
-        """
+    def migrate(self, file_version: int, raw: dict) -> None:
+        """Carry user choices forward while new defaults and renamed settings take effect."""
         if file_version >= SCHEMA_VERSION:
             return
         defaults = Config()
-        self.fps = defaults.fps
-        if abs(self.sensitivity - 0.78) < 1e-9:  # the version 1 default
-            self.sensitivity = defaults.sensitivity
+        if file_version < 2:
+            # fps has never been in the menu, and a sensitivity still sitting on the old
+            # default was never chosen by anyone - both should follow the new tuning.
+            self.fps = defaults.fps
+            if abs(self.sensitivity - 0.78) < 1e-9:  # the version 1 default
+                self.sensitivity = defaults.sensitivity
+        if file_version < 3 and raw.get("show_rate_in_menubar"):
+            self.menubar_extra = "rate"  # renamed when the blink counter joined it
         self.schema_version = SCHEMA_VERSION
         self.save()
 
@@ -130,3 +131,5 @@ class Config:
             self.sound_name = "Tink"
         if self.hud_position not in ("top", "center", "bottom"):
             self.hud_position = "top"
+        if self.menubar_extra not in ("none", "rate", "count"):
+            self.menubar_extra = "none"

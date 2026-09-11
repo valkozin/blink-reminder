@@ -253,6 +253,19 @@ def test_one_measurable_blink_brings_the_app_back():
     assert len(reminders) > before, "reminders resume once blinks are measurable again"
 
 
+def test_a_blink_is_timestamped_and_measured_for_the_live_preview():
+    detector, mesh, _, _ = _detector(sensitivity=0.82)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    assert detector._last_blink_event == 0.0
+
+    now = _feed(detector, mesh, 0.15, 0.2, start=now)
+    end = _feed(detector, mesh, 0.30, 0.5, start=now)
+    assert detector._last_blink_event > 0, "the preview flashes off this timestamp"
+    assert end - detector._last_blink_event < 1.0
+    assert detector._last_blink_depth is not None
+    assert 0.45 < detector._last_blink_depth < 0.55, "0.15 is half of the 0.30 baseline"
+
+
 def test_signal_quality_reflects_how_deep_the_blinks_look():
     """Shallow blinks mean the camera is seeing the eyelids at an angle."""
     detector, mesh, _, _ = _detector(sensitivity=0.82)

@@ -42,6 +42,7 @@ SIGNAL_TIMEOUT = 120.0
 # Well-aimed: 35-60%. Steep angle: barely past the threshold, and half the blinks are lost.
 WEAK_BLINK_DEPTH = 0.25
 MIN_DEPTH_SAMPLES = 5
+BLINK_FLASH_SECONDS = 0.5       # how long the preview celebrates a detected blink
 
 
 class State:
@@ -123,6 +124,8 @@ class BlinkDetector:
         self._face_seconds_since_blink = 0.0
         self._blink_depths: deque[float] = deque(maxlen=30)
         self._closed_min_ear: Optional[float] = None
+        self._last_blink_event: float = 0.0
+        self._last_blink_depth: Optional[float] = None
 
         self._state = State.STARTING
         self._blinks = 0
@@ -419,7 +422,7 @@ class BlinkDetector:
         face_present = now - self._last_face < FACE_GRACE
 
         if self._preview_wanted:
-            self._render_preview(frame, results, ear_now, face_present)
+            self._render_preview(frame, results, ear_now, face_present, now)
 
         if self._on_frame is not None:
             self._on_frame(
@@ -465,31 +468,94 @@ class BlinkDetector:
         elif not probing and away_for > self.config.absence_timeout:
             self._enter_standby(now)
 
-    def _render_preview(self, frame, results, ear: float, face_present: bool) -> None:
-        """Annotate the frame so you can see whether the camera has found your eyes."""
+    def _render_preview(self, frame, results, ear: float, face_present: bool, now: float) -> None:
+        """Draw what the detector is thinking: the eyes it found, the live EAR against the
+        threshold, a running blink count, and a flash the moment a blink is registered."""
         try:
-            view = cv2.flip(frame, 1)  # mirror, so moving the laptop feels right
+            view = cv2.flip(frame, 1)  # mirror, so moving the laptop feels the right way round
             height, width = view.shape[:2]
+            green, red, white = (0, 200, 0), (0, 0, 230), (255, 255, 255)
+
             if results.multi_face_landmarks:
                 landmarks = results.multi_face_landmarks[0].landmark
                 for index in LEFT_EYE + RIGHT_EYE:
                     point = landmarks[index]
                     cv2.circle(
-                        view,
-                        (int((1.0 - point.x) * width), int(point.y * height)),
-                        2,
-                        (0, 200, 0),
-                        -1,
+                        view, (int((1.0 - point.x) * width), int(point.y * height)), 2, green, -1
                     )
-            colour = (0, 200, 0) if face_present else (0, 0, 230)
-            label = f"EAR {ear:.2f}  thr {self._threshold():.2f}" if face_present else "NO FACE"
-            cv2.rectangle(view, (0, 0), (width - 1, height - 1), colour, 3)
-            cv2.putText(view, label, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, colour, 2)
+
+            fresh_blink = now - self._last_blink_event < BLINK_FLASH_SECONDS
+            colour = green if face_present else red
+            cv2.rectangle(view, (0, 0), (width - 1, height - 1), colour, 8 if fresh_blink else 3)
+
+            if face_present:
+                cv2.putText(
+                    view, f"EAR {ear:.2f}  thr {self._threshold():.2f}",
+                    (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, white, 2,
+                )
+            else:
+                cv2.putText(view, "NO FACE", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, red, 2)
+
+            count = f"{self._blinks}"
+            (text_width, _), _ = cv2.getTextSize(count, cv2.FONT_HERSHEY_SIMPLEX, 1.1, 3)
+            cv2.putText(
+                view, count, (width - text_width - 14, 34),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.1, green if fresh_blink else white, 3,
+            )
+
+            if fresh_blink:
+                depth = f"BLINK  -{self._last_blink_depth * 100:.0f}%" if self._last_blink_depth else "BLINK"
+                (text_width, _), _ = cv2.getTextSize(depth, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 3)
+                # Low in the frame: the middle is where your eyes are, and covering them
+                # is the last thing a window for aiming the camera should do.
+                cv2.putText(
+                    view, depth, ((width - text_width) // 2, height - 62),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, green, 3,
+                )
+
+            self._draw_gauge(view, ear, face_present)
+
             ok, buffer = cv2.imencode(".jpg", view, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
             if ok:
                 self._preview_jpeg = buffer.tobytes()
         except Exception:  # pragma: no cover - the preview must never break detection
             log.debug("preview rendering failed", exc_info=True)
+
+    def _draw_gauge(self, view, ear: float, face_present: bool) -> None:
+        """A bar showing the live EAR against the blink threshold.
+
+        Crossing the line is exactly what counts as a blink, so watching the marker dip past
+        it tells you immediately whether the camera can see your eyelids at all.
+        """
+        if not self._ear_history:
+            return
+        height, width = view.shape[:2]
+        baseline = float(np.median(self._ear_history))
+        threshold = self._threshold()
+        low, high = baseline * 0.35, baseline * 1.15
+        if high <= low:
+            return
+
+        left, right = 20, width - 20
+        top = height - 42
+
+        def position(value: float) -> int:
+            fraction = min(max((value - low) / (high - low), 0.0), 1.0)
+            return int(left + fraction * (right - left))
+
+        cv2.rectangle(view, (left, top), (right, top + 18), (40, 40, 40), -1)
+        # everything left of the threshold counts as "eye closed"
+        cv2.rectangle(view, (left, top), (position(threshold), top + 18), (0, 90, 0), -1)
+        cv2.line(view, (position(threshold), top - 6), (position(threshold), top + 24), (0, 220, 0), 2)
+        if face_present and not np.isnan(ear):
+            x = position(ear)
+            cv2.line(view, (x, top - 4), (x, top + 22), (255, 255, 255), 3)
+        cv2.putText(
+            view, "closed", (left + 4, top - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 220, 0), 1
+        )
+        cv2.putText(
+            view, "open", (right - 40, top - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1
+        )
 
     def _enter_standby(self, now: float) -> None:
         if self._probe_started is not None:
@@ -533,9 +599,11 @@ class BlinkDetector:
             if duration <= MAX_BLINK_SECONDS:
                 self._blinks += 1
                 self._blink_times.append(now)
+                self._last_blink_event = now
                 baseline = float(np.median(self._ear_history)) if self._ear_history else 0.0
                 if baseline > 0:
-                    self._blink_depths.append((baseline - deepest) / baseline)
+                    self._last_blink_depth = (baseline - deepest) / baseline
+                    self._blink_depths.append(self._last_blink_depth)
         elif self._eyes_closed:
             self._last_blink = now
             if self._closed_min_ear is None or ear < self._closed_min_ear:

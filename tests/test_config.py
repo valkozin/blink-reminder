@@ -33,6 +33,18 @@ def test_an_unversioned_file_gets_the_new_detection_defaults():
     assert json.loads(path.read_text())["schema_version"] == config_module.SCHEMA_VERSION
 
 
+def test_the_old_menu_bar_rate_toggle_is_carried_over():
+    _with_config_file({"show_rate_in_menubar": True})
+    assert Config.load().menubar_extra == "rate"
+
+
+def test_menu_bar_extra_rejects_nonsense():
+    cfg = Config()
+    cfg.menubar_extra = "fireworks"
+    cfg.clamp()
+    assert cfg.menubar_extra == "none"
+
+
 def test_a_hand_picked_sensitivity_is_kept():
     _with_config_file({"fps": 10, "sensitivity": 0.70})
     assert Config.load().sensitivity == 0.70
