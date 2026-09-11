@@ -7,10 +7,11 @@ import time
 
 import rumps
 
-from . import APP_NAME, autostart, stats
+from . import APP_NAME, autostart, stats, system
 from .alerts import Alerts
 from .config import AVAILABLE_SOUNDS, INTERVAL_CHOICES, Config
 from .detector import BlinkDetector, State
+from .preview import PreviewWindow
 from .i18n import t
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ ICONS = {
 SENSITIVITY_LEVELS = (("sensitivity_low", 0.70), ("sensitivity_normal", 0.78), ("sensitivity_high", 0.86))
 VOLUME_LEVELS = (15, 25, 35, 50, 75, 100)
 SNOOZE_CHOICES = (("snooze_15", 15), ("snooze_30", 30), ("snooze_60", 60))
+UNSEEN_ICON = "🙈"
 
 
 class BlinkReminderApp(rumps.App):
@@ -44,6 +46,9 @@ class BlinkReminderApp(rumps.App):
         self._flushed_reminders = 0
         self._flushed_active = 0.0
         self._error_shown = False
+        self._unseen_warned_at = 0.0
+        self._preview = PreviewWindow(t("preview_title"))
+        self._preview_timer = None
 
         self._build_menu()
         if camera_granted:
@@ -100,6 +105,15 @@ class BlinkReminderApp(rumps.App):
             self.sensitivity_items[value] = item
             sensitivity.add(item)
 
+        camera = rumps.MenuItem(t("camera"))
+        self.camera_items = {}
+        for index, name in enumerate(system.list_cameras()):
+            item = rumps.MenuItem(name, callback=self._camera_callback(index))
+            self.camera_items[index] = item
+            camera.add(item)
+        camera.add(rumps.separator)
+        camera.add(rumps.MenuItem(t("preview"), callback=self.on_preview))
+
         self.idle_item = rumps.MenuItem(t("pause_when_idle"), callback=self.on_toggle_idle)
         self.lock_item = rumps.MenuItem(t("pause_when_locked"), callback=self.on_toggle_lock)
         self.login_item = rumps.MenuItem(t("start_at_login"), callback=self.on_toggle_login)
@@ -116,6 +130,7 @@ class BlinkReminderApp(rumps.App):
             self.hud_item,
             self.rate_in_bar_item,
             sensitivity,
+            camera,
             None,
             self.idle_item,
             self.lock_item,
@@ -141,6 +156,8 @@ class BlinkReminderApp(rumps.App):
             item.state = int(abs(self.config.sensitivity - value) < 0.01)
         self.hud_item.state = int(self.config.hud_enabled)
         self.rate_in_bar_item.state = int(self.config.show_rate_in_menubar)
+        for index, item in self.camera_items.items():
+            item.state = int(index == self.config.camera_index)
         self.idle_item.state = int(self.config.pause_when_idle)
         self.lock_item.state = int(self.config.pause_when_locked)
         self.login_item.state = int(autostart.is_enabled())
@@ -200,6 +217,33 @@ class BlinkReminderApp(rumps.App):
         self._save()
         if self.config.hud_enabled:
             self.alerts.show_hint()
+
+    def _camera_callback(self, index: int):
+        def handler(_=None) -> None:
+            self.config.camera_index = index
+            self._save()
+            self.detector.reopen_camera()
+
+        return handler
+
+    def on_preview(self, _=None) -> None:
+        """Show what the camera sees, so it can be aimed at a face."""
+        self.detector.set_preview(True)
+        self._preview.show()
+        if self._preview_timer is None:
+            self._preview_timer = rumps.Timer(self._refresh_preview, 0.15)
+            self._preview_timer.start()
+
+    def _refresh_preview(self, _=None) -> None:
+        if not self._preview.is_open():
+            self.detector.set_preview(False)
+            if self._preview_timer is not None:
+                self._preview_timer.stop()
+                self._preview_timer = None
+            return
+        jpeg = self.detector.preview_jpeg()
+        if jpeg:
+            self._preview.update(jpeg)
 
     def on_toggle_rate_in_bar(self, _=None) -> None:
         self.config.show_rate_in_menubar = not self.config.show_rate_in_menubar
@@ -278,7 +322,12 @@ class BlinkReminderApp(rumps.App):
             self.status_item.title = t("state_error")
             return
         snap = self.detector.snapshot()
-        icon = ICONS.get(snap.state, "👁")
+        icon = UNSEEN_ICON if snap.unseen_at_keyboard else ICONS.get(snap.state, "👁")
+        if snap.unseen_at_keyboard and not self._unseen_warned:
+            self._unseen_warned = True
+            rumps.alert(title=t("unseen_title"), message=t("unseen_body"), ok="OK")
+        elif not snap.unseen_at_keyboard and snap.seconds_since_face < 5:
+            self._unseen_warned_at = 0.0
         if self.config.show_rate_in_menubar and snap.rate is not None and snap.state == State.ACTIVE:
             self.title = f"{icon} {snap.rate:g}"
         else:
@@ -290,6 +339,8 @@ class BlinkReminderApp(rumps.App):
         self._flush_stats()
 
     def _status_text(self, snap) -> str:
+        if snap.unseen_at_keyboard:
+            return t("state_unseen")
         if snap.state == State.PAUSED and snap.paused_until:
             return t("snooze_until", time=time.strftime("%H:%M", time.localtime(snap.paused_until)))
         return t(f"state_{snap.state}")

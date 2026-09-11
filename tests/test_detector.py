@@ -173,6 +173,55 @@ def test_no_reminders_when_the_face_is_gone():
     assert detector._state == State.ACTIVE
 
 
+def test_a_glance_away_freezes_the_countdown_instead_of_restarting_it():
+    """Looking at the keyboard for a few seconds must not buy you a fresh interval."""
+    detector, mesh, reminders, _ = _detector(interval=10.0)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)   # calibrate
+    now = _feed(detector, mesh, 0.10, 0.2, start=now)          # blink: countdown at zero
+    now = _feed(detector, mesh, 0.30, 8.0, start=now)          # 8 s without a blink
+    now = _feed(detector, mesh, None, 5.0, start=now)          # glance away
+    assert reminders == []
+    now = _feed(detector, mesh, 0.30, 3.0, start=now)          # back: 8 s + 3 s > interval
+    assert len(reminders) == 1, "the countdown should resume where it stopped"
+
+
+def test_a_long_absence_starts_over():
+    detector, mesh, reminders, _ = _detector(interval=10.0, absence_timeout=600.0)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    now = _feed(detector, mesh, 0.10, 0.2, start=now)          # blink: countdown at zero
+    now = _feed(detector, mesh, 0.30, 8.0, start=now)
+    now = _feed(detector, mesh, None, 25.0, start=now)         # away long enough to have blinked
+    now = _feed(detector, mesh, 0.30, 5.0, start=now)
+    assert reminders == [], "a fresh interval after a real break"
+    _feed(detector, mesh, 0.30, 6.0, start=now)
+    assert len(reminders) == 1
+
+
+def test_baseline_ignores_closed_eyes():
+    """A long closure must not drag the median down and blind the detector."""
+    detector, mesh, _, _ = _detector()
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    before = detector._threshold()
+    now = _feed(detector, mesh, 0.10, 2.5, start=now)          # eyes shut, 25 frames
+    assert abs(detector._threshold() - before) < 1e-9, "closed frames must stay out of the baseline"
+
+    now = _feed(detector, mesh, 0.30, 1.0, start=now)
+    now = _feed(detector, mesh, 0.12, 0.2, start=now)          # a normal blink still registers
+    _feed(detector, mesh, 0.30, 1.0, start=now)
+    assert detector.snapshot().blinks == 1
+
+
+def test_baseline_relearns_when_the_eyes_look_closed_for_good():
+    """If the face moves and EAR drops for good, the detector must re-calibrate, not go deaf."""
+    detector, mesh, _, _ = _detector()
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    now = _feed(detector, mesh, 0.18, 30.0, start=now)         # new normal, well under the old threshold
+    assert detector._threshold() < 0.30 * 0.78, "threshold should have followed the new baseline"
+    now = _feed(detector, mesh, 0.08, 0.2, start=now)          # a blink from the new baseline
+    _feed(detector, mesh, 0.18, 1.0, start=now)
+    assert detector.snapshot().blinks >= 1
+
+
 def test_pause_and_resume():
     detector, _, _, _ = _detector()
     assert detector.paused is False
@@ -185,6 +234,52 @@ def test_pause_and_resume():
     assert detector.paused is True
     time.sleep(0.25)
     assert detector.paused is False, "timed pause must expire on its own"
+
+
+def test_standby_does_not_thrash_the_camera_when_you_are_out_of_frame():
+    """Typing while the camera cannot see you must not hold the camera open forever."""
+    import blinkreminder.detector as module
+
+    detector, _, _, _ = _detector()
+    original = module.system.idle_seconds
+    module.system.idle_seconds = lambda: 0.0  # at the keyboard the whole time
+    try:
+        detector._state = State.STANDBY
+        detector._standby_since = FAKE_START
+        assert not detector._standby_should_wake(FAKE_START + 5), "too soon to reopen the camera"
+        assert detector._standby_should_wake(FAKE_START + module.STANDBY_MIN_SLEEP + 1)
+
+        # Three probes that found nobody: back off to one look every few minutes.
+        detector._failed_probes = module.PROBE_BACKOFF_AFTER
+        assert not detector._standby_should_wake(FAKE_START + 60)
+        assert detector._standby_should_wake(FAKE_START + module.PROBE_BACKOFF_SLEEP + 1)
+
+        # Seeing a face clears the backoff.
+        detector._failed_probes = 0
+        assert detector._standby_should_wake(FAKE_START + module.STANDBY_MIN_SLEEP + 1)
+    finally:
+        module.system.idle_seconds = original
+
+
+def test_failed_probes_are_counted_and_reset():
+    import blinkreminder.detector as module
+
+    # Config.clamp() keeps absence_timeout at 10 s or more, so feed a little longer.
+    detector, mesh, _, _ = _detector(absence_timeout=10.0)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)     # face seen
+    assert detector._failed_probes == 0
+    now = _feed(detector, mesh, None, 13.0, start=now)           # gone -> standby
+    # _feed drives _process directly, so the state flips back to no_face on the frame
+    # after standby is entered; _standby_since is the durable evidence it happened.
+    assert detector._standby_since is not None
+    assert detector._failed_probes == 0, "the first standby is not a failed probe"
+
+    detector._state = State.NO_FACE                             # a probe starts
+    detector._probe_started = now
+    now = _feed(detector, mesh, None, module.STANDBY_PROBE_WINDOW + 2, start=now)
+    assert detector._failed_probes == 1
+    _feed(detector, mesh, 0.30, 1.0, start=now)                 # found again
+    assert detector._failed_probes == 0
 
 
 def test_thread_releases_the_camera_while_paused():
@@ -228,6 +323,16 @@ def test_thread_releases_the_camera_while_paused():
         detector.resume()
         time.sleep(1.0)
         assert opened["count"] >= 2, "camera should come back after resume"
+
+        # The framing preview needs the camera even while the app is paused.
+        opened_before = opened["count"]
+        detector.pause()
+        time.sleep(1.5)
+        detector.set_preview(True)
+        time.sleep(1.5)
+        assert opened["count"] > opened_before, "preview must reopen the camera"
+        assert detector.preview_jpeg(), "preview should be producing frames"
+        detector.set_preview(False)
     finally:
         detector.stop()
         module.cv2.VideoCapture = original

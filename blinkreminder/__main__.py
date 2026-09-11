@@ -84,6 +84,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         metavar="SECONDS",
         help="check the camera and print live detection numbers, then exit",
     )
+    parser.add_argument(
+        "--record",
+        metavar="FILE.csv",
+        help="with --diagnose: write per-frame detection data for later analysis",
+    )
     parser.add_argument("--verbose", action="store_true", help="debug logging")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     return parser.parse_args(argv)
@@ -143,7 +148,7 @@ def _run_headless(config: Config) -> int:
     return 0
 
 
-def _run_diagnostics(config: Config, seconds: int) -> int:
+def _run_diagnostics(config: Config, seconds: int, record: str | None = None) -> int:
     """Live numbers from the detector - the quickest way to see whether it sees you."""
     from . import system
     from .detector import BlinkDetector, State
@@ -154,7 +159,26 @@ def _run_diagnostics(config: Config, seconds: int) -> int:
         return 1
 
     reminders: list[float] = []
-    detector = BlinkDetector(config, on_reminder=lambda: reminders.append(time.time()))
+    trace = None
+    writer = None
+    if record:
+        import csv
+
+        trace = open(record, "w", newline="", encoding="utf-8")
+        writer = csv.DictWriter(
+            trace,
+            fieldnames=[
+                "t", "face", "ear", "baseline", "threshold",
+                "closed", "blinks", "reminders", "since_blink", "state",
+            ],
+        )
+        writer.writeheader()
+
+    detector = BlinkDetector(
+        config,
+        on_reminder=lambda: reminders.append(time.time()),
+        on_frame=(lambda row: writer.writerow(row)) if writer else None,
+    )
     detector.start()
     print(f"watching for {seconds}s - blink a few times, then look away for a moment\n")
     print(f"{'time':>5}  {'state':<9} {'blinks':>6} {'rate':>6}  {'EAR baseline':>12} {'threshold':>9}")
@@ -176,6 +200,9 @@ def _run_diagnostics(config: Config, seconds: int) -> int:
     finally:
         snap = detector.snapshot()
         detector.stop()
+        if trace is not None:
+            trace.close()
+            print(f"per-frame data written to {record}")
 
     print(
         f"\n{snap.blinks} blinks and {len(reminders)} reminders in "
@@ -245,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"settings saved to {CONFIG_PATH}")
 
     if args.diagnose:
-        return _run_diagnostics(config, args.diagnose)
+        return _run_diagnostics(config, args.diagnose, args.record)
 
     if args.headless or sys.platform != "darwin":
         return _run_headless(config)

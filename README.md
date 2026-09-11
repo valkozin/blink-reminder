@@ -66,12 +66,27 @@ Click the eye in the menu bar:
 | **Sound** | Eight short system sounds, volume, or silent |
 | **Show on-screen hint** | The floating hint, on or off |
 | **Detection sensitivity** | Raise it if light blinks are missed, lower it if squinting is counted |
+| **Camera** | Pick a camera, or open **Check camera framing…** to aim it |
 | **Pause when keyboard is idle** | Off by default — reading without touching the keyboard still counts as screen time |
 | **Pause when screen is locked** | On by default |
 | **Start at login** | Installs/removes the launchd agent |
 | **Today’s statistics…** | Screen time, blinks, average rate, reminders |
 
-Menu bar icon: 👁 watching · ⏸ paused · 💤 standing by · ⚠️ camera problem.
+Menu bar icon: 👁 watching · ⏸ paused · 💤 standing by · 🙈 you are at the keyboard but the
+camera cannot find your face · ⚠️ camera problem.
+
+### Point the camera at your face
+
+This is the one thing that has to be right, and it is easy to get wrong: if your main screen is
+an external monitor and the laptop sits beside or below it, its camera sees the side of your
+head, not your eyes. MediaPipe then finds no face at all, the countdown is suspended, and the
+app looks broken — sometimes silent for minutes, sometimes reminding you the moment you glance
+over. The menu bar switches to 🙈 when that is happening, and after a few unseen minutes at the
+keyboard the app says so outright.
+
+Open **Camera › Check camera framing…** and move the camera (or yourself) until the border
+around the preview turns green and dots appear on your eyes. That preview keeps running even
+while the app is paused, so you can aim it whenever.
 
 ### Command line
 
@@ -102,8 +117,10 @@ reminded to blink at an empty chair.
 
 ## Troubleshooting
 
-**"Camera unavailable" or nothing is detected.** Another app may be holding the camera (Zoom,
-Teams, Photo Booth). Otherwise check System Settings › Privacy & Security › Camera.
+**🙈 in the menu bar, or nothing is ever detected.** The camera is not looking at your face —
+see *Point the camera at your face* above. If the picture itself is missing, another app may be
+holding the camera (Zoom, Teams, Photo Booth); otherwise check System Settings › Privacy &
+Security › Camera.
 
 **The reminder never fires.** Your blink rate is probably fine. Lower *Remind after…* to 6
 seconds to confirm the detection works, then set it back.
@@ -130,8 +147,17 @@ $VENV/bin/python -m blinkreminder --verbose      # run straight from this checko
 Re-run `./install.sh` to push local changes into the installed copy.
 
 `blinkreminder/` holds the app: `detector.py` (camera loop and blink logic), `alerts.py` (sound
-and the floating hint), `menubar.py` (the UI), `autostart.py` (launchd agent), `config.py`,
-`stats.py`, `system.py`, `i18n.py`.
+and the floating hint), `preview.py` (the framing window), `menubar.py` (the UI), `autostart.py`
+(launchd agent), `config.py`, `stats.py`, `system.py`, `i18n.py`.
+
+To see what the detector actually sees, record a trace and analyse it:
+
+```bash
+blink-reminder --diagnose 120 --record /tmp/trace.csv   # pause the running app first
+```
+
+Each row carries the EAR, the current baseline and threshold, whether a face was found and how
+long it has been since the last blink — enough to tell a detection problem from an aiming one.
 
 A separate browser demo of the same idea lives in `src/` (React + MediaPipe Tasks) — see
 [LOCAL_SETUP.md](LOCAL_SETUP.md). It is a toy: the menu bar app is the one to use daily.

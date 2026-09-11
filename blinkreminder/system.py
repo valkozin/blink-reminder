@@ -105,3 +105,17 @@ def ensure_camera_access(timeout: float = 90.0) -> bool:
     while "granted" not in answer and time.time() < deadline:
         loop.runMode_beforeDate_(NSDefaultRunLoopMode, NSDate.dateWithTimeIntervalSinceNow_(0.1))
     return answer.get("granted", False)
+
+
+def list_cameras() -> list[str]:
+    """Camera names, in the order OpenCV indexes them. Does not open the devices."""
+    if not IS_MAC:
+        return []
+    try:
+        import AVFoundation as av  # type: ignore
+
+        devices = av.AVCaptureDevice.devicesWithMediaType_(av.AVMediaTypeVideo) or []
+        return [str(device.localizedName()) for device in devices]
+    except Exception:  # pragma: no cover - defensive
+        log.debug("could not list cameras", exc_info=True)
+        return []

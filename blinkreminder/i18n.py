@@ -33,6 +33,19 @@ EN = {
     "volume_item": "{percent}%",
     "hud": "Show on-screen hint",
     "show_rate": "Show blink rate in the menu bar",
+    "preview": "Check camera framing…",
+    "preview_title": "Blink Reminder - camera",
+    "camera": "Camera",
+    "state_unseen": "Cannot see you - check the camera",
+    "unseen_title": "Blink Reminder cannot see you",
+    "unseen_body": (
+        "You have been at the keyboard for a few minutes, but the camera has not found "
+        "your face in all that time, so no reminders are being sent.\n\n"
+        "This usually means the camera is not pointed at you - a laptop standing beside "
+        "the monitor you actually look at, for instance.\n\n"
+        "Open “Check camera framing…” in the menu and move the camera until the frame "
+        "turns green, or pick another camera in the Camera submenu."
+    ),
     "sensitivity": "Detection sensitivity",
     "sensitivity_low": "Low (fewer false blinks)",
     "sensitivity_normal": "Normal",
@@ -93,6 +106,19 @@ RU = {
     "volume_item": "{percent}%",
     "hud": "Показывать подсказку на экране",
     "show_rate": "Показывать частоту в строке меню",
+    "preview": "Проверить кадр камеры…",
+    "preview_title": "Blink Reminder — камера",
+    "camera": "Камера",
+    "state_unseen": "Не вижу вас — проверьте камеру",
+    "unseen_title": "Blink Reminder вас не видит",
+    "unseen_body": (
+        "Вы уже несколько минут за клавиатурой, но камера всё это время не находит "
+        "ваше лицо — значит, напоминания не приходят.\n\n"
+        "Обычно причина в том, что камера смотрит не на вас: например, ноутбук стоит "
+        "сбоку от монитора, в который вы смотрите.\n\n"
+        "Откройте «Проверить кадр камеры…» в меню и поверните камеру так, чтобы рамка "
+        "стала зелёной, либо выберите другую камеру в подменю «Камера»."
+    ),
     "sensitivity": "Чувствительность",
     "sensitivity_low": "Низкая (меньше ложных срабатываний)",
     "sensitivity_normal": "Обычная",

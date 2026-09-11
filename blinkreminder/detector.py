@@ -26,8 +26,14 @@ REOPEN_MARGIN = 1.06            # hysteresis, so a borderline EAR does not flick
 MAX_BLINK_SECONDS = 0.7         # longer than this is "eyes closed", not a blink
 CALIBRATION_SAMPLES = 40
 FACE_GRACE = 2.0                # keep trusting the last detection for this long
+ABSENCE_RESET = 20.0            # away longer than this: assume you blinked, start over
+STUCK_CLOSED_SECONDS = 3.0      # EAR below threshold this long is the new normal, not a blink
 STANDBY_PROBE_EVERY = 60.0      # while standing by, take a look every minute
 STANDBY_PROBE_WINDOW = 8.0      # ...and give the probe this long to find a face
+STANDBY_MIN_SLEEP = 20.0        # but never reopen the camera sooner than this
+PROBE_BACKOFF_AFTER = 3         # fruitless probes before backing right off
+PROBE_BACKOFF_SLEEP = 300.0     # ...to one look every five minutes
+UNSEEN_WARNING_AFTER = 180.0    # at the keyboard, unseen this long: say so
 
 
 class State:
@@ -50,6 +56,8 @@ class Snapshot:
     seconds_since_blink: float = 0.0
     active_seconds: float = 0.0       # time with your face in front of the camera
     paused_until: Optional[float] = None
+    seconds_since_face: float = 0.0
+    unseen_at_keyboard: bool = False  # you are typing, but the camera cannot find you
 
 
 def _ear(points: np.ndarray) -> float:
@@ -67,10 +75,12 @@ class BlinkDetector:
         config: Config,
         on_reminder: Callable[[], None],
         on_error: Optional[Callable[[str], None]] = None,
+        on_frame: Optional[Callable[[dict], None]] = None,
     ) -> None:
         self.config = config
         self._on_reminder = on_reminder
         self._on_error = on_error
+        self._on_frame = on_frame  # diagnostics only; see --diagnose
 
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -92,8 +102,13 @@ class BlinkDetector:
         self._last_reminder = 0.0
         self._standby_since: Optional[float] = None
         self._probe_started: Optional[float] = None
+        self._failed_probes = 0
         self._camera_failed_at: Optional[float] = None
         self._error_reported = False
+        self._reopen_requested = False
+
+        self._preview_wanted = False
+        self._preview_jpeg: Optional[bytes] = None
 
         self._state = State.STARTING
         self._blinks = 0
@@ -148,6 +163,19 @@ class BlinkDetector:
             self.pause()
         return self.paused
 
+    def set_preview(self, enabled: bool) -> None:
+        """Turn the camera-framing preview on or off. Keeps the camera awake while on."""
+        self._preview_wanted = enabled
+        if not enabled:
+            self._preview_jpeg = None
+
+    def preview_jpeg(self) -> Optional[bytes]:
+        return self._preview_jpeg
+
+    def reopen_camera(self) -> None:
+        """Drop the capture so the next loop picks up a new camera index."""
+        self._reopen_requested = True
+
     def snapshot(self) -> Snapshot:
         now = time.monotonic()
         self._trim_blink_times(now)
@@ -155,6 +183,7 @@ class BlinkDetector:
         if self._active_seconds >= 25.0:
             window = min(60.0, max(self._active_seconds, 1.0))
             rate = round(len(self._blink_times) * 60.0 / window, 1)
+        since_face = now - self._last_face
         return Snapshot(
             state=self._state,
             blinks=self._blinks,
@@ -163,6 +192,12 @@ class BlinkDetector:
             seconds_since_blink=now - self._last_blink,
             active_seconds=self._active_seconds,
             paused_until=self._paused_until,
+            seconds_since_face=since_face,
+            unseen_at_keyboard=(
+                since_face > UNSEEN_WARNING_AFTER
+                and system.idle_seconds() < 60.0
+                and self._state in (State.NO_FACE, State.STANDBY)
+            ),
         )
 
     # ------------------------------------------------------------------ camera
@@ -212,15 +247,17 @@ class BlinkDetector:
             self._face_mesh = mp_face_mesh.FaceMesh(
                 max_num_faces=1,
                 refine_landmarks=False,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
+                # Low, on purpose: the camera is often off to one side of the screen
+                # the person is actually looking at, so the face is never frontal.
+                min_detection_confidence=0.3,
+                min_tracking_confidence=0.3,
             )
         return self._face_mesh
 
     # ------------------------------------------------------------------ helpers
 
-    def _reset_timers(self) -> None:
-        now = time.monotonic()
+    def _reset_timers(self, now: Optional[float] = None) -> None:
+        now = time.monotonic() if now is None else now
         self._last_blink = now
         self._last_reminder = 0.0
         self._closed_since = None
@@ -249,9 +286,19 @@ class BlinkDetector:
         return None
 
     def _standby_should_wake(self, now: float) -> bool:
+        """Opening the camera costs a second and 15% of a core - do it sparingly.
+
+        Without the minimum sleep below, a user who is typing but out of frame (laptop
+        camera off to one side) makes this bounce between probe and standby forever,
+        holding the camera open the whole time for nothing.
+        """
+        asleep_for = now - (self._standby_since or now)
+        floor = PROBE_BACKOFF_SLEEP if self._failed_probes >= PROBE_BACKOFF_AFTER else STANDBY_MIN_SLEEP
+        if asleep_for < floor:
+            return False
         if system.idle_seconds() < 3.0:
             return True
-        return self._standby_since is not None and now - self._standby_since > STANDBY_PROBE_EVERY
+        return asleep_for > max(STANDBY_PROBE_EVERY, floor)
 
     # ------------------------------------------------------------------ main loop
 
@@ -259,22 +306,34 @@ class BlinkDetector:
         while not self._stop.is_set():
             loop_started = time.monotonic()
 
-            blocked = self._blocking_state()
-            if blocked is not None:
-                self._state = blocked
+            if self._reopen_requested:
+                self._reopen_requested = False
                 self._release_camera()
-                self._reset_timers()
-                self._stop.wait(1.0)
-                continue
 
-            if self._state == State.STANDBY:
+            if self._preview_wanted:
+                # Aiming the camera only works if it is actually running.
+                if self._state == State.STANDBY:
+                    self._state = State.NO_FACE
+                    self._standby_since = None
+                    self._probe_started = None
+                    self._failed_probes = 0
+            else:
+                blocked = self._blocking_state()
+                if blocked is not None:
+                    self._state = blocked
+                    self._release_camera()
+                    self._reset_timers(loop_started)
+                    self._stop.wait(1.0)
+                    continue
+
+            if not self._preview_wanted and self._state == State.STANDBY:
                 if not self._standby_should_wake(loop_started):
                     self._stop.wait(1.0)
                     continue
                 self._standby_since = None
                 self._probe_started = loop_started
                 self._state = State.NO_FACE
-                self._reset_timers()
+                self._reset_timers(loop_started)
 
             if self._cap is None and self._camera_failed_at is not None:
                 if loop_started - self._camera_failed_at < 15.0:
@@ -315,20 +374,41 @@ class BlinkDetector:
         height, width = frame.shape[:2]
         aspect = height / float(width) if width else 1.0
 
+        ear_now = float("nan")
         if results.multi_face_landmarks:
             self._last_face = now
             self._probe_started = None
+            self._failed_probes = 0
             landmarks = results.multi_face_landmarks[0].landmark
             indices = LEFT_EYE + RIGHT_EYE
             points = np.array(
                 [(landmarks[i].x, landmarks[i].y * aspect) for i in indices],
                 dtype=np.float64,
             )
-            ear = (_ear(points[:6]) + _ear(points[6:])) / 2.0
-            self._ear_history.append(ear)
+            ear = ear_now = (_ear(points[:6]) + _ear(points[6:])) / 2.0
             self._update_blink_state(ear, now)
+            self._record_baseline(ear, now)
 
         face_present = now - self._last_face < FACE_GRACE
+
+        if self._preview_wanted:
+            self._render_preview(frame, results, ear_now, face_present)
+
+        if self._on_frame is not None:
+            self._on_frame(
+                {
+                    "t": now,
+                    "face": int(bool(results.multi_face_landmarks)),
+                    "ear": ear_now,
+                    "baseline": float(np.median(self._ear_history)) if self._ear_history else float("nan"),
+                    "threshold": self._threshold(),
+                    "closed": int(self._eyes_closed),
+                    "blinks": self._blinks,
+                    "reminders": self._reminders,
+                    "since_blink": now - self._last_blink,
+                    "state": self._state,
+                }
+            )
 
         if face_present:
             self._active_seconds += dt
@@ -338,9 +418,16 @@ class BlinkDetector:
                 self._maybe_remind(now)
             return
 
-        # Nobody in front of the camera.
+        # Nobody in front of the camera. Hold the countdown where it is rather than
+        # restarting it: glancing at the keyboard for three seconds does not moisten
+        # your eyes, and restarting on every glance means the reminder never arrives.
         self._state = State.NO_FACE
-        self._reset_timers()
+        if now - self._last_face > ABSENCE_RESET:
+            self._reset_timers(now)
+        else:
+            self._last_blink += dt
+            if self._last_reminder:
+                self._last_reminder += dt
 
         probing = self._probe_started is not None
         away_for = now - self._last_face
@@ -349,11 +436,55 @@ class BlinkDetector:
         elif not probing and away_for > self.config.absence_timeout:
             self._enter_standby(now)
 
+    def _render_preview(self, frame, results, ear: float, face_present: bool) -> None:
+        """Annotate the frame so you can see whether the camera has found your eyes."""
+        try:
+            view = cv2.flip(frame, 1)  # mirror, so moving the laptop feels right
+            height, width = view.shape[:2]
+            if results.multi_face_landmarks:
+                landmarks = results.multi_face_landmarks[0].landmark
+                for index in LEFT_EYE + RIGHT_EYE:
+                    point = landmarks[index]
+                    cv2.circle(
+                        view,
+                        (int((1.0 - point.x) * width), int(point.y * height)),
+                        2,
+                        (0, 200, 0),
+                        -1,
+                    )
+            colour = (0, 200, 0) if face_present else (0, 0, 230)
+            label = f"EAR {ear:.2f}  thr {self._threshold():.2f}" if face_present else "NO FACE"
+            cv2.rectangle(view, (0, 0), (width - 1, height - 1), colour, 3)
+            cv2.putText(view, label, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, colour, 2)
+            ok, buffer = cv2.imencode(".jpg", view, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            if ok:
+                self._preview_jpeg = buffer.tobytes()
+        except Exception:  # pragma: no cover - the preview must never break detection
+            log.debug("preview rendering failed", exc_info=True)
+
     def _enter_standby(self, now: float) -> None:
+        if self._probe_started is not None:
+            self._failed_probes += 1
         self._state = State.STANDBY
         self._standby_since = now
         self._probe_started = None
         self._release_camera()
+
+    def _record_baseline(self, ear: float, now: float) -> None:
+        """Keep the rolling baseline made of open-eye frames only.
+
+        Feeding it every frame lets a long closure - or a burst of blinking - drag the
+        median down and quietly raise the bar for the next blink.
+        """
+        if len(self._ear_history) < CALIBRATION_SAMPLES:
+            self._ear_history.append(ear)
+            return
+        if not self._eyes_closed:
+            self._ear_history.append(ear)
+        elif self._closed_since is not None and now - self._closed_since > STUCK_CLOSED_SECONDS:
+            # Below the threshold for seconds on end: the face moved, the light changed,
+            # or the baseline is simply wrong. Let it re-learn instead of going deaf.
+            self._ear_history.append(ear)
 
     def _update_blink_state(self, ear: float, now: float) -> None:
         threshold = self._threshold()
