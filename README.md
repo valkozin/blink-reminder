@@ -5,7 +5,11 @@ when you forget to blink. Built for people who sit in front of a screen all day:
 the background, reminds you over *any* app — including full-screen ones — and gets out of the
 way when you step away from the desk.
 
-Everything happens locally. No frames, no statistics and nothing else ever leaves the machine.
+Everything happens locally. The app opens no network connections at all — the landmark models
+ship inside the Python package, camera frames never touch the disk, and the only files written
+are your settings and a per-day count of blinks in
+`~/Library/Application Support/BlinkReminder/`. It needs the internet exactly once, during
+`./install.sh`, to download its libraries.
 
 ## What it does
 
@@ -209,7 +213,10 @@ Each row carries the EAR, the current baseline and threshold, whether a face was
 long it has been since the last blink — enough to tell a detection problem from an aiming one.
 
 A separate browser demo of the same idea lives in `src/` (React + MediaPipe Tasks) — see
-[LOCAL_SETUP.md](LOCAL_SETUP.md). It is a toy: the menu bar app is the one to use daily.
+[LOCAL_SETUP.md](LOCAL_SETUP.md). It is a toy: the menu bar app is the one to use daily. Note
+that unlike the app, the demo does reach the network — it pulls its WASM runtime from
+`cdn.jsdelivr.net` and its model from `storage.googleapis.com` on every load. Your video still
+stays in the browser.
 
 ## License
 
