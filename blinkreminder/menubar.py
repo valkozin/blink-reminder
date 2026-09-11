@@ -401,6 +401,40 @@ class BlinkReminderApp(rumps.App):
         elif command == "toggle":
             self.detector.toggle_pause()
 
+    def _menu_bar_report(self) -> dict:
+        """Where the status item actually is - an icon can be missing for reasons that
+        look identical from the outside, and macOS parks items it cannot fit underneath
+        the notch, where they report themselves visible but cannot be seen or clicked."""
+        report: dict = {}
+        try:
+            from AppKit import NSScreen
+
+            item = getattr(getattr(self, "_nsapp", None), "nsstatusitem", None)
+            if item is None:
+                report["status_item"] = "missing"
+                return report
+            report["status_item"] = "present"
+            report["visible"] = bool(item.isVisible())
+            report["title"] = str(item.title() or "")
+            button = item.button()
+            window = button.window() if button is not None else None
+            if window is not None:
+                frame = window.frame()
+                report["frame"] = [round(frame.origin.x), round(frame.origin.y),
+                                   round(frame.size.width), round(frame.size.height)]
+                report["placed"] = bool(window.isVisible()) and frame.size.height > 0
+            screen = (NSScreen.screens() or [None])[0]
+            if screen is not None and hasattr(screen, "auxiliaryTopLeftArea"):
+                left, right = screen.auxiliaryTopLeftArea(), screen.auxiliaryTopRightArea()
+                if left is not None and right is not None and report.get("frame"):
+                    notch = (float(left.size.width), float(right.origin.x))
+                    centre = report["frame"][0] + report["frame"][2] / 2
+                    report["notch"] = [round(notch[0]), round(notch[1])]
+                    report["behind_notch"] = bool(notch[0] < centre < notch[1])
+        except Exception as exc:  # pragma: no cover - diagnostics must never break the app
+            report["error"] = f"{type(exc).__name__}: {exc}"
+        return report
+
     def _publish_state(self, snap) -> None:
         """A snapshot on disk, so the app can be inspected without its menu."""
         now = time.monotonic()
@@ -409,6 +443,7 @@ class BlinkReminderApp(rumps.App):
         self._last_published = now
         control.publish(
             {
+                "menu_bar": self._menu_bar_report(),
                 "state": snap.state,
                 "paused": self.detector.paused,
                 "paused_until": snap.paused_until,

@@ -125,10 +125,20 @@ the threshold.
 
 ### When the icon is not there
 
-macOS hides menu bar icons that do not fit, silently and with no overflow indicator — so
-unplugging an external display, which shortens the menu bar and puts a notch in the middle of
-it, can make the eye vanish while the app keeps running. Nothing in the app can force it back;
-what it can do is not be the only way in. Everything the menu does is also a command:
+macOS packs menu bar icons from the right, and when they run out of room it parks the leftmost
+ones *underneath the notch*, where they report themselves visible but cannot be seen or clicked.
+Unplugging an external display is enough to trigger it: the built-in menu bar is shorter and has
+a notch in the middle. `blink-reminder --status` says so outright, with the coordinates.
+
+There is no fix from inside the app — an `autosaveName` and a preferred-position default, which
+is how a user-dragged position is normally remembered, do not persist for a process without a
+bundle identifier, and setting them stopped the item being placed at all. What works is freeing
+room to the right: System Settings › Control Center, set one or two of AirDrop, Bluetooth, Now
+Playing or Display to "Don't show in Menu Bar" (each is worth 30–40 points, and `--status`
+prints how many are needed). Setting **Next to the menu bar icon** to *Nothing* makes this one
+as narrow as it goes.
+
+Either way the icon is not the only way in. Everything the menu does is also a command:
 
 ```bash
 blink-reminder --status     # what it is doing right now

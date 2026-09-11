@@ -130,6 +130,17 @@ def _run_control(args: argparse.Namespace) -> Optional[int]:
         print(f"  signal quality      : {state.get('signal_quality', 'unknown')}")
         print(f"  seconds since blink : {state.get('seconds_since_blink', 0)}"
               f" of {state.get('interval', 0):g}")
+        bar = state.get("menu_bar") or {}
+        if bar.get("behind_notch"):
+            notch = bar.get("notch", [0, 0])
+            frame = bar.get("frame", [0, 0, 0, 0])
+            print(f"  menu bar icon       : hidden behind the notch"
+                  f" (it sits at x {frame[0]}-{frame[0] + frame[2]}, the notch covers"
+                  f" {notch[0]}-{notch[1]})")
+            print("                        free up room on the right of the menu bar, or"
+                  " use the commands above")
+        elif bar.get("status_item") == "present" and not bar.get("placed", True):
+            print("  menu bar icon       : not placed by macOS")
         if age > 30:
             print(f"  (this reading is {age:.0f}s old)")
         return 0
