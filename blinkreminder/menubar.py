@@ -59,14 +59,31 @@ class BlinkReminderApp(rumps.App):
             self.title = ICONS[State.ERROR]
             self._error_shown = True
             rumps.Timer(self._camera_denied, 1).start()
-        self._tick_timer = rumps.Timer(self._tick, 1)
-        self._tick_timer.start()
+        self._start_tick_timer()
+
+    def _start_tick_timer(self) -> None:
+        """One tick a second, in common run loop modes.
+
+        rumps schedules its timers in the default mode only, which stops them while a menu
+        is open - exactly when the blink counter and the countdown below are being read.
+        """
+        from Foundation import NSRunLoop, NSRunLoopCommonModes, NSTimer
+
+        def fire(_timer) -> None:
+            try:
+                self._tick()
+            except Exception:  # pragma: no cover - a bad tick must not kill the app
+                log.exception("menu refresh failed")
+
+        self._tick_timer = NSTimer.timerWithTimeInterval_repeats_block_(1.0, True, fire)
+        NSRunLoop.currentRunLoop().addTimer_forMode_(self._tick_timer, NSRunLoopCommonModes)
 
     # ------------------------------------------------------------------ menu
 
     def _build_menu(self) -> None:
         self.status_item = rumps.MenuItem(t("state_starting"))
         self.rate_item = rumps.MenuItem(t("rate_unknown"))
+        self.timing_item = rumps.MenuItem("")
         self.pause_item = rumps.MenuItem(t("pause"), callback=self.on_toggle_pause)
 
         snooze = rumps.MenuItem(t("snooze"))
@@ -128,6 +145,7 @@ class BlinkReminderApp(rumps.App):
         self.menu = [
             self.status_item,
             self.rate_item,
+            self.timing_item,
             None,
             self.pause_item,
             snooze,
@@ -148,6 +166,7 @@ class BlinkReminderApp(rumps.App):
         ]
         self.status_item.set_callback(None)
         self.rate_item.set_callback(None)
+        self.timing_item.set_callback(None)
         self._refresh_checkmarks()
 
     def _refresh_checkmarks(self) -> None:
@@ -357,7 +376,20 @@ class BlinkReminderApp(rumps.App):
         else:
             self.rate_item.title = t("rate_unknown_total", total=snap.blinks)
         self.pause_item.title = t("resume") if self.detector.paused else t("pause")
+        self.timing_item.title = self._timing_text(snap)
         self._flush_stats()
+
+    def _timing_text(self, snap) -> str:
+        """Why nothing is happening right now - otherwise the gap reads as a failure."""
+        if self.detector.paused or snap.state not in (State.ACTIVE, State.NO_FACE):
+            return t("timing_idle")
+        if snap.reminder_hold > 0:
+            return t("timing_hold", seconds=int(snap.reminder_hold) + 1)
+        return t(
+            "timing_countdown",
+            seconds=int(snap.seconds_since_blink),
+            interval=f"{self.config.interval:g}",
+        )
 
     def _status_text(self, snap) -> str:
         if snap.signal_unusable:

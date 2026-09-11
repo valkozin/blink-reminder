@@ -69,6 +69,7 @@ class Snapshot:
     unseen_at_keyboard: bool = False  # you are typing, but the camera cannot find you
     signal_unusable: bool = False     # your face is visible but blinks are not measurable
     signal_quality: str = "unknown"    # good | weak | unknown - how clearly blinks show up
+    reminder_hold: float = 0.0        # seconds left before another reminder may be sent
 
 
 def _ear(points: np.ndarray) -> float:
@@ -193,14 +194,18 @@ class BlinkDetector:
         """Drop the capture so the next loop picks up a new camera index."""
         self._reopen_requested = True
 
-    def snapshot(self) -> Snapshot:
-        now = time.monotonic()
+    def snapshot(self, now: Optional[float] = None) -> Snapshot:
+        """`now` is only passed by tests, which drive their own clock."""
+        now = time.monotonic() if now is None else now
         self._trim_blink_times(now)
         rate: Optional[float] = None
         if self._active_seconds >= 25.0:
             window = min(60.0, max(self._active_seconds, 1.0))
             rate = round(len(self._blink_times) * 60.0 / window, 1)
         since_face = now - self._last_face
+        hold = 0.0
+        if self._last_reminder:
+            hold = max(0.0, self.config.min_reminder_gap - (now - self._last_reminder))
         return Snapshot(
             state=self._state,
             blinks=self._blinks,
@@ -212,6 +217,7 @@ class BlinkDetector:
             seconds_since_face=since_face,
             signal_unusable=self.signal_unusable,
             signal_quality=self.signal_quality,
+            reminder_hold=hold,
             unseen_at_keyboard=(
                 since_face > UNSEEN_WARNING_AFTER
                 and system.idle_seconds() < 60.0

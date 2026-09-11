@@ -60,6 +60,7 @@ Click the eye in the menu bar:
 | Menu item | What it does |
 |---|---|
 | *Watching your blinks* | Current state, and the blink rate over the last minute (15–20/min is healthy) or a warning that blinks are barely visible |
+| *No blink for 4 s of 12* | What the app is waiting for right now, counting live — including the quiet period after a reminder |
 | **Pause / Resume** | Stops the reminders and closes the camera |
 | **Pause for…** | 15, 30 or 60 minutes, then it resumes by itself |
 | **Remind after…** | 6–30 seconds without a blink (default: 12) |
@@ -103,8 +104,13 @@ rather than the sensitivity slider. For a permanent check without opening anythi
 
 ### If the reminders feel wrong
 
+**A reminder arrives, then the same wait produces nothing.** There is a floor between
+reminders — twice the interval, at least 20 seconds — so the app cannot nag while you are
+blinking normally but it happens to miss a couple. The third line of the menu counts that quiet
+period down, so you can always see whether it is waiting on you or on itself.
+
 Check the menu first: **Remind after…** may be set to 6 seconds, which nudges you as often as
-the 30-second floor between reminders allows. 12 is the default and 15–20 is gentle.
+that floor allows. 12 is the default and 15–20 is gentle.
 
 If it seems to miss blinks, record a trace and look at the numbers rather than guessing — see
 *Development* below. On a well-aimed camera a real blink shows as a 35–60% drop below the

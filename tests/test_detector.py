@@ -147,6 +147,27 @@ def test_reminder_after_the_configured_interval():
     assert len(reminders) == 1
 
 
+def test_the_quiet_period_after_a_reminder_is_reported():
+    """The gap is why a second wait produces nothing; the menu has to be able to say so."""
+    detector, mesh, reminders, config = _detector(interval=6.0, min_reminder_gap=20.0)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    now = _feed(detector, mesh, 0.10, 0.2, start=now)      # blink
+    assert detector.snapshot(now).reminder_hold == 0.0
+
+    now = _feed(detector, mesh, 0.30, 7.0, start=now)      # 6 s later: a reminder
+    assert len(reminders) == 1
+    hold = detector.snapshot(now).reminder_hold
+    assert 12.0 < hold <= 20.0, f"most of the 20 s gap still to run, got {hold:.1f}"
+
+    now = _feed(detector, mesh, 0.10, 0.2, start=now)      # blink, wait 6 s again
+    now = _feed(detector, mesh, 0.30, 7.0, start=now)
+    assert len(reminders) == 1, "still inside the quiet period"
+    assert detector.snapshot(now).reminder_hold > 0
+
+    _feed(detector, mesh, 0.30, 15.0, start=now)           # 22 s after the first: past the gap
+    assert len(reminders) == 2
+
+
 def test_reminders_respect_the_minimum_gap():
     detector, mesh, reminders, _ = _detector(interval=6.0, min_reminder_gap=30.0)
     now = _feed(detector, mesh, 0.30, 7.0, start=FAKE_START)
