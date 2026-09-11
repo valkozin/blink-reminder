@@ -123,6 +123,25 @@ If it seems to miss blinks, record a trace and look at the numbers rather than g
 baseline; if the deepest dip in a whole minute is 10–15%, the camera angle is the problem, not
 the threshold.
 
+### When the icon is not there
+
+macOS hides menu bar icons that do not fit, silently and with no overflow indicator — so
+unplugging an external display, which shortens the menu bar and puts a notch in the middle of
+it, can make the eye vanish while the app keeps running. Nothing in the app can force it back;
+what it can do is not be the only way in. Everything the menu does is also a command:
+
+```bash
+blink-reminder --status     # what it is doing right now
+blink-reminder --pause 30   # or --pause for no time limit
+blink-reminder --resume
+blink-reminder --quit       # stops it; it returns at your next login
+blink-reminder --start      # start it again without logging out
+```
+
+To get the icon back on a crowded menu bar: hold ⌘ and drag icons to reorder them, so this one
+sits to the left of whatever is being cut off, or set **Next to the menu bar icon** to *Nothing*
+to make it as narrow as possible.
+
 ### Command line
 
 ```bash

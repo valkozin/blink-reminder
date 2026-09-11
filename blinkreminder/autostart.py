@@ -78,6 +78,16 @@ def disable() -> None:
         PLIST_PATH.unlink(missing_ok=True)
 
 
+def start_agent() -> bool:
+    """Kick the login item back into life. False if there is no login item to kick."""
+    if not is_enabled():
+        return False
+    result = _launchctl("kickstart", "-k", f"gui/{_uid()}/{BUNDLE_ID}")
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or "launchctl kickstart failed").strip())
+    return True
+
+
 def toggle() -> bool:
     if is_enabled():
         disable()

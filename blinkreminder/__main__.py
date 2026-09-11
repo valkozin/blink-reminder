@@ -18,7 +18,7 @@ os.environ.setdefault("ABSL_LOGGING_VERBOSITY", "-1")
 # We request camera access ourselves (see system.ensure_camera_access), on the main thread.
 os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
 
-from typing import Callable
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -69,6 +69,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         description=f"{APP_NAME} - a gentle nudge to blink while you work.",
     )
     parser.add_argument("--headless", action="store_true", help="run without the menu bar icon")
+    parser.add_argument("--status", action="store_true", help="print what the running app is doing")
+    parser.add_argument("--quit", action="store_true", dest="quit_app", help="stop the running app")
+    parser.add_argument(
+        "--pause",
+        nargs="?",
+        type=float,
+        const=0.0,
+        metavar="MINUTES",
+        help="pause the running app, optionally for a number of minutes",
+    )
+    parser.add_argument("--resume", action="store_true", help="resume the running app")
+    parser.add_argument("--start", action="store_true", help="start the background app again")
     parser.add_argument("--interval", type=float, help="seconds without a blink before reminding")
     parser.add_argument("--sound", choices=AVAILABLE_SOUNDS, help="reminder sound")
     parser.add_argument("--no-sound", action="store_true", help="mute the reminder sound")
@@ -94,6 +106,72 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true", help="debug logging")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     return parser.parse_args(argv)
+
+
+def _run_control(args: argparse.Namespace) -> Optional[int]:
+    """Commands that talk to an already-running app instead of starting one."""
+    from . import control
+
+    if args.status:
+        running = control.is_running()
+        state = control.read_state()
+        if not running:
+            print(f"{APP_NAME} is not running.")
+            return 0
+        if state is None:
+            print(f"{APP_NAME} is running, but has not reported its state yet.")
+            return 0
+        age = time.time() - state.get("updated", 0)
+        rate = state.get("rate")
+        print(f"{APP_NAME}: {'paused' if state.get('paused') else state.get('state', 'unknown')}")
+        print(f"  blinks this session : {state.get('blinks', 0)}"
+              + (f"  ({rate:g}/min)" if rate else ""))
+        print(f"  reminders sent      : {state.get('reminders', 0)}")
+        print(f"  signal quality      : {state.get('signal_quality', 'unknown')}")
+        print(f"  seconds since blink : {state.get('seconds_since_blink', 0)}"
+              f" of {state.get('interval', 0):g}")
+        if age > 30:
+            print(f"  (this reading is {age:.0f}s old)")
+        return 0
+
+    if args.start:
+        from . import autostart
+
+        if control.is_running():
+            print(f"{APP_NAME} is already running.")
+            return 0
+        if not autostart.is_supported() or not autostart.start_agent():
+            print(
+                "No login item is installed, so there is no background app to start.\n"
+                "Install one with --install-autostart, or run blink-reminder with no "
+                "arguments to keep it in this terminal.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"{APP_NAME} started.")
+        return 0
+
+    command = (
+        "quit" if args.quit_app else
+        "pause" if args.pause is not None else
+        "resume" if args.resume else None
+    )
+    if command is None:
+        return None
+
+    if not control.is_running():
+        print(f"{APP_NAME} is not running.", file=sys.stderr)
+        return 1
+    minutes = args.pause if command == "pause" and args.pause else None
+    control.send(command, minutes)
+    if command == "pause":
+        print("Paused" + (f" for {minutes:g} minutes." if minutes else "."))
+    elif command == "resume":
+        print("Resumed.")
+    else:
+        print("Stopping. It will start again at your next login"
+              " (use --uninstall-autostart to prevent that).")
+    return 0
 
 
 def _apply_overrides(config: Config, args: argparse.Namespace) -> None:
@@ -143,8 +221,23 @@ def _run_headless(config: Config) -> int:
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
+
+    from . import control
+
     while not stop:
         time.sleep(0.5)
+        pending = control.take()
+        if pending is None:
+            continue
+        command, argument = pending
+        if command == "quit":
+            stop = True
+        elif command == "pause":
+            detector.pause(argument * 60 if argument else None)
+        elif command == "resume":
+            detector.resume()
+        elif command == "toggle":
+            detector.toggle_pause()
     detector.stop()
     print("stopped.")
     return 0
@@ -248,6 +341,10 @@ def _run_menubar(config: Config) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _setup_logging(args.verbose)
+
+    control_result = _run_control(args)
+    if control_result is not None:
+        return control_result
 
     if args.reset_config:
         CONFIG_PATH.unlink(missing_ok=True)

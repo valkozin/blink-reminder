@@ -7,7 +7,7 @@ import time
 
 import rumps
 
-from . import APP_NAME, autostart, stats, system
+from . import APP_NAME, autostart, control, stats, system
 from .alerts import Alerts
 from .config import AVAILABLE_SOUNDS, INTERVAL_CHOICES, Config
 from .detector import BlinkDetector, State
@@ -44,6 +44,7 @@ class BlinkReminderApp(rumps.App):
         self.detector = BlinkDetector(config, on_reminder=self._on_reminder, on_error=self._on_error)
 
         self._last_flush = time.monotonic()
+        self._last_published = 0.0
         self._flushed_blinks = 0
         self._flushed_reminders = 0
         self._flushed_active = 0.0
@@ -316,6 +317,7 @@ class BlinkReminderApp(rumps.App):
 
     def on_quit(self, _=None) -> None:
         self._flush_stats(force=True)
+        control.STATE_PATH.unlink(missing_ok=True)
         self.detector.stop()
         rumps.quit_application()
 
@@ -347,17 +349,20 @@ class BlinkReminderApp(rumps.App):
         rumps.alert(title=t("camera_error_title"), message=t("camera_denied_body"), ok="OK")
 
     def _tick(self, _=None) -> None:
+        self._handle_command()
         if not self.camera_granted:
             self.title = ICONS[State.ERROR]
             self.status_item.title = t("state_error")
             return
         snap = self.detector.snapshot()
-        icon = UNSEEN_ICON if snap.unseen_at_keyboard else ICONS.get(snap.state, "👁")
-        if snap.unseen_at_keyboard and not self._unseen_warned:
-            self._unseen_warned = True
-            rumps.alert(title=t("unseen_title"), message=t("unseen_body"), ok="OK")
-        elif not snap.unseen_at_keyboard and snap.seconds_since_face < 5:
-            self._unseen_warned_at = 0.0
+        blind = snap.unseen_at_keyboard or snap.signal_unusable
+        icon = UNSEEN_ICON if blind else ICONS.get(snap.state, "👁")
+        # The menu bar icon and the status line carry this continuously; the modal
+        # explanation is worth one interruption, not one an hour of them.
+        if blind and time.monotonic() - self._unseen_warned_at > 3600:
+            self._unseen_warned_at = time.monotonic()
+            body = "unusable_body" if snap.signal_unusable else "unseen_body"
+            rumps.alert(title=t("unseen_title"), message=t(body), ok="OK")
         extra = self.config.menubar_extra
         if extra == "count":
             # A number that ticks up the moment you blink - the quickest way to tell
@@ -378,6 +383,43 @@ class BlinkReminderApp(rumps.App):
         self.pause_item.title = t("resume") if self.detector.paused else t("pause")
         self.timing_item.title = self._timing_text(snap)
         self._flush_stats()
+        self._publish_state(snap)
+
+    def _handle_command(self) -> None:
+        """Act on `blink-reminder --pause/--resume/--quit` from a terminal."""
+        pending = control.take()
+        if pending is None:
+            return
+        command, argument = pending
+        log.info("command from the terminal: %s", command)
+        if command == "quit":
+            self.on_quit()
+        elif command == "pause":
+            self.detector.pause(argument * 60 if argument else None)
+        elif command == "resume":
+            self.detector.resume()
+        elif command == "toggle":
+            self.detector.toggle_pause()
+
+    def _publish_state(self, snap) -> None:
+        """A snapshot on disk, so the app can be inspected without its menu."""
+        now = time.monotonic()
+        if now - self._last_published < 5.0:
+            return
+        self._last_published = now
+        control.publish(
+            {
+                "state": snap.state,
+                "paused": self.detector.paused,
+                "paused_until": snap.paused_until,
+                "blinks": snap.blinks,
+                "reminders": snap.reminders,
+                "rate": snap.rate,
+                "signal_quality": snap.signal_quality,
+                "seconds_since_blink": round(snap.seconds_since_blink, 1),
+                "interval": self.config.interval,
+            }
+        )
 
     def _timing_text(self, snap) -> str:
         """Why nothing is happening right now - otherwise the gap reads as a failure."""
