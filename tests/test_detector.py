@@ -25,21 +25,30 @@ class _Landmark:
         self.y = y
 
 
-def _landmarks_for(ear: float):
-    """478 landmarks where both eyes have exactly the requested aspect ratio."""
+INTEROCULAR = 0.40  # outer corner to outer corner, the detector's scale reference
+
+
+def _landmarks_for(openness: float):
+    """478 landmarks whose eyelid gap is exactly `openness` of the interocular distance.
+
+    That is the quantity the detector measures, so tests can talk in the same numbers:
+    0.30 is a comfortably open eye, 0.15 a blink halfway down.
+    """
     points = [_Landmark(0.5, 0.5) for _ in range(478)]
-    width = 0.1
-    height = ear * width
-    for outer, up1, up2, inner, low2, low1 in (
-        (362, 385, 387, 263, 373, 380),
-        (33, 160, 158, 133, 153, 144),
+    points[33] = _Landmark(0.5 - INTEROCULAR / 2, 0.5)    # right eye, outer corner
+    points[263] = _Landmark(0.5 + INTEROCULAR / 2, 0.5)   # left eye, outer corner
+    points[133] = _Landmark(0.5 - 0.08, 0.5)              # inner corners
+    points[362] = _Landmark(0.5 + 0.08, 0.5)
+
+    gap = openness * INTEROCULAR
+    for centre, pairs in (
+        (0.5 + INTEROCULAR / 4, ((385, 380), (386, 374), (387, 373))),
+        (0.5 - INTEROCULAR / 4, ((160, 144), (159, 145), (158, 153))),
     ):
-        points[outer] = _Landmark(0.3, 0.5)
-        points[inner] = _Landmark(0.3 + width, 0.5)
-        points[up1] = _Landmark(0.33, 0.5 + height / 2)
-        points[up2] = _Landmark(0.36, 0.5 + height / 2)
-        points[low1] = _Landmark(0.33, 0.5 - height / 2)
-        points[low2] = _Landmark(0.36, 0.5 - height / 2)
+        for offset, (upper, lower) in enumerate(pairs):
+            x = centre + (offset - 1) * 0.02
+            points[upper] = _Landmark(x, 0.5 + gap / 2)
+            points[lower] = _Landmark(x, 0.5 - gap / 2)
     return points
 
 
@@ -94,11 +103,51 @@ def _feed(detector, mesh, ear, seconds, start, step=0.1):
 
 def test_open_eyes_calibrate_then_stay_active():
     detector, mesh, reminders, _ = _detector()
-    now = _feed(detector, mesh, 0.30, 1.0, start=FAKE_START)
-    assert detector._state == State.STARTING, "should still be calibrating after 10 frames"
+    now = _feed(detector, mesh, 0.30, 0.5, start=FAKE_START)
+    assert detector._state == State.STARTING, "should still be calibrating after five frames"
     _feed(detector, mesh, 0.30, 4.0, start=now)
-    assert len(detector._ear_history) > CALIBRATION_SAMPLES
+    assert len(detector._history) >= CALIBRATION_SAMPLES
     assert detector._state == State.ACTIVE
+
+
+def _ramp(detector, mesh, start_value, end_value, seconds, start, step=0.1):
+    """Slide the measurement from one level to another, as leaning in or turning does."""
+    frames = max(int(seconds / step), 1)
+    now = start
+    for i in range(frames):
+        mesh.ear = start_value + (end_value - start_value) * (i + 1) / frames
+        detector._process(FRAME, now)
+        now += step
+    return now
+
+
+def test_slow_drift_does_not_look_like_blinking():
+    """Leaning in or turning changes the measurement more than a blink does.
+
+    A minute-long baseline cannot follow that, and the old one invented blinks - and
+    then missed real ones - every time the person shifted in their chair.
+    """
+    detector, mesh, reminders, _ = _detector()
+    now = _feed(detector, mesh, 0.30, 5.0, start=FAKE_START)
+    now = _ramp(detector, mesh, 0.30, 0.42, 6.0, start=now)      # leaning towards the screen
+    now = _feed(detector, mesh, 0.42, 3.0, start=now)
+    now = _ramp(detector, mesh, 0.42, 0.30, 6.0, start=now)      # and back again
+    now = _feed(detector, mesh, 0.30, 3.0, start=now)
+    assert detector.snapshot(now).blinks == 0, "posture is not blinking"
+
+    now = _feed(detector, mesh, 0.15, 0.2, start=now)            # a real blink, half closed
+    _feed(detector, mesh, 0.30, 1.0, start=now)
+    assert detector.snapshot(now).blinks == 1
+
+
+def test_the_baseline_only_remembers_the_last_few_seconds():
+    import blinkreminder.detector as module
+
+    detector, mesh, _, _ = _detector()
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    assert abs(detector._baseline() - 0.30) < 0.01
+    _feed(detector, mesh, 0.45, module.BASELINE_SECONDS + 2, start=now)
+    assert abs(detector._baseline() - 0.45) < 0.01, "the old level must age out"
 
 
 def test_blink_is_counted_once():

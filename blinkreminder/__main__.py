@@ -18,6 +18,8 @@ os.environ.setdefault("ABSL_LOGGING_VERBOSITY", "-1")
 # We request camera access ourselves (see system.ensure_camera_access), on the main thread.
 os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
 
+from typing import Callable
+
 import numpy as np
 
 from . import APP_NAME, __version__, stats
@@ -160,24 +162,30 @@ def _run_diagnostics(config: Config, seconds: int, record: str | None = None) ->
 
     reminders: list[float] = []
     trace = None
-    writer = None
+    recorder: "Callable[[dict], None] | None" = None
     if record:
         import csv
 
         trace = open(record, "w", newline="", encoding="utf-8")
-        writer = csv.DictWriter(
-            trace,
-            fieldnames=[
-                "t", "face", "ear", "baseline", "threshold",
-                "closed", "blinks", "reminders", "since_blink", "state",
-            ],
-        )
-        writer.writeheader()
+        state = {"writer": None}
+
+        def write_row(row: dict) -> None:
+            """Columns come from the first frame that saw a face, so the richer
+            landmark features appear without being listed in two places."""
+            writer = state["writer"]
+            if writer is None:
+                if not row.get("face"):
+                    return
+                writer = state["writer"] = csv.DictWriter(trace, fieldnames=list(row))
+                writer.writeheader()
+            writer.writerow(row)
+
+        recorder = write_row
 
     detector = BlinkDetector(
         config,
         on_reminder=lambda: reminders.append(time.time()),
-        on_frame=(lambda row: writer.writerow(row)) if writer else None,
+        on_frame=recorder,
     )
     detector.start()
     print(f"watching for {seconds}s - blink a few times, then look away for a moment\n")

@@ -9,9 +9,9 @@ Everything happens locally. No frames, no statistics and nothing else ever leave
 
 ## What it does
 
-- **Detects real blinks**, not a fixed timer, using MediaPipe Face Mesh and the Eye Aspect Ratio.
-  The threshold adapts to *your* eyes — glasses, lighting and distance to the screen are
-  calibrated away within the first few seconds.
+- **Detects real blinks**, not a fixed timer, using MediaPipe's refined face mesh. The
+  measurement is calibrated against your own eyes over the last few seconds, so glasses,
+  lighting, distance and posture are all divided out.
 - **Reminds you gently**: a short system sound (default: `Tink`, at 35% volume) plus a small
   translucent hint that floats above every window and every Space, full-screen apps included.
   Never more than twice a minute, however hard you stare.
@@ -23,10 +23,12 @@ Everything happens locally. No frames, no statistics and nothing else ever leave
 - **Starts at login** via a launchd agent, from the menu or the command line.
 - Interface is English or Russian, picked from the system language.
 
-Measured cost on an M1 Pro: about 15% of a single core (≈1.5% of the machine) and 280 MB while
-it is actually watching you — roughly half of that is the camera pipeline itself, which is why
-the app releases the camera the moment you leave the desk. Frames are analysed 10 times per
-second at 480×360 and nothing is rendered.
+Measured cost on an M1 Pro: about 27% of a single core (≈2.5% of the machine) and 290 MB while
+it is actually watching you — roughly a third of that is the camera pipeline itself, which is
+why the app releases the camera the moment you leave the desk. Frames are captured at 720p,
+shrunk to 480×360 for the landmark model and analysed 15 times per second; nothing is rendered.
+Dropping `fps` in the settings file trades detection for battery — the camera pipeline costs
+about 9% of a core whatever you do, and each frame per second adds roughly 1.2% on top.
 
 ## Install
 
@@ -130,18 +132,36 @@ blink-reminder --diagnose 20         # live detection numbers, to check the came
 
 Settings live in `~/Library/Application Support/BlinkReminder/config.json` and hold a few knobs
 that are not in the menu (`camera_index`, `fps`, `absence_timeout`, `hud_position`, `language`).
-Lowering `fps` saves less than you would hope (10 → 5 fps takes 15% of a core down to 11%) and
-costs a lot of accuracy, because a blink lasts about 150 ms. Do not set the frame size below
-480×360 either — blinks stop being resolved.
+Lowering `fps` costs accuracy, because a blink lasts about 150 ms and is caught in one or two
+frames as it is; halving the rate loses roughly a quarter of them. `process_width` is what
+reaches the landmark model — below 480 px blinks stop being resolved, and above it nothing
+improves.
 Logs go to `~/Library/Logs/BlinkReminder.log`.
 
 ## How it works
 
-For each eye, six landmarks give the **Eye Aspect Ratio** — eye height over eye width. The app
-keeps a rolling median of your open-eye EAR over the last minute; a blink is a dip below
-`sensitivity × baseline` that lasts less than 0.7 s, with a little hysteresis so a borderline
-frame cannot flicker. Longer closures still reset the timer (closed eyes are moist eyes) but are
-not counted as blinks. If no face is visible the countdown is suspended, so you are never
+Three measurements, each chosen by recording the camera and comparing alternatives on the same
+frames rather than by intuition.
+
+**The signal.** Six eyelid landmarks per eye (three upper/lower pairs) give the gap between the
+lids, divided by the distance between the outer corners of the two eyes. The textbook Eye Aspect
+Ratio divides by the width of the *same* eye instead, which is a short span between two jittery
+landmarks that also shrinks whenever the head turns — a blink that never happened. The distance
+between the eyes is several times longer and far steadier.
+
+**The refined mesh.** MediaPipe can run a dedicated high-resolution model over each eye
+(`refine_landmarks`). Measured side by side on identical frames it costs the same 5.5 ms per
+frame as the base mesh, and it deepens a blink from about 20% below baseline to about 45% —
+the difference between blinks buried in landmark jitter and blinks that are unmistakable.
+
+**A local baseline.** "Open" means the median of the last three seconds, not the last minute.
+Leaning in, turning towards another screen, or MediaPipe re-acquiring your face all move the
+measurement further than a blink does; a minute-long baseline cannot follow that, and the
+reminder then fires on posture instead of dry eyes.
+
+A blink is a dip below `sensitivity × baseline` lasting less than 0.7 s, with hysteresis so a
+borderline frame cannot flicker. Longer closures still reset the timer (closed eyes are moist
+eyes) but are not counted. If no face is visible the countdown is suspended, so you are never
 reminded to blink at an empty chair.
 
 ## Troubleshooting

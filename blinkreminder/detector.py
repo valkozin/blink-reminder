@@ -20,11 +20,18 @@ log = logging.getLogger(__name__)
 # MediaPipe Face Mesh landmark indices: outer, upper x2, inner, lower x2.
 LEFT_EYE = (362, 385, 387, 263, 373, 380)
 RIGHT_EYE = (33, 160, 158, 133, 153, 144)
+# Three upper/lower lid pairs per eye plus the corners, for the richer features written
+# by --record. Averaging several pairs is steadier than the classic two.
+LEFT_LID_PAIRS = ((385, 380), (386, 374), (387, 373))
+RIGHT_LID_PAIRS = ((160, 144), (159, 145), (158, 153))
+LEFT_CORNERS = (362, 263)
+RIGHT_CORNERS = (133, 33)
+NOSE_TIP, CHIN, FOREHEAD = 1, 152, 10
 
-FALLBACK_EAR_THRESHOLD = 0.21   # used until the personal baseline is ready
-REOPEN_MARGIN = 1.06            # hysteresis, so a borderline EAR does not flicker
+BASELINE_SECONDS = 3.0          # how much recent history defines "your eyes, open"
+REOPEN_MARGIN = 1.06            # hysteresis, so a borderline frame does not flicker
 MAX_BLINK_SECONDS = 0.7         # longer than this is "eyes closed", not a blink
-CALIBRATION_SAMPLES = 40
+CALIBRATION_SAMPLES = 20
 FACE_GRACE = 2.0                # keep trusting the last detection for this long
 ABSENCE_RESET = 20.0            # away longer than this: assume you blinked, start over
 STUCK_CLOSED_SECONDS = 3.0      # EAR below threshold this long is the new normal, not a blink
@@ -72,13 +79,30 @@ class Snapshot:
     reminder_hold: float = 0.0        # seconds left before another reminder may be sent
 
 
-def _ear(points: np.ndarray) -> float:
-    """Eye Aspect Ratio for six landmarks already scaled to pixel-ish proportions."""
-    vertical = np.linalg.norm(points[1] - points[5]) + np.linalg.norm(points[2] - points[4])
-    horizontal = np.linalg.norm(points[0] - points[3])
-    if horizontal < 1e-6:
-        return 0.0
-    return float(vertical / (2.0 * horizontal))
+def _openness(landmarks, aspect: float) -> float:
+    """How far the eyelids are apart, measured against the distance between the eyes.
+
+    The classic Eye Aspect Ratio divides the lid gap by the width of the same eye. That
+    width is a short span between two jittery corner landmarks, and it shrinks when the
+    head turns, which shows up as a blink that never happened. The distance between the
+    outer corners of the two eyes is several times longer and far steadier, so dividing
+    by it leaves a signal that moves when the eyelids move and not much otherwise.
+    Three lid pairs per eye are averaged instead of two, which costs nothing and trims
+    the per-landmark noise further.
+    """
+
+    def point(index: int) -> np.ndarray:
+        lm = landmarks[index]
+        return np.array([lm.x, lm.y * aspect], dtype=np.float64)
+
+    def gap(pair) -> float:
+        return float(np.linalg.norm(point(pair[0]) - point(pair[1])))
+
+    interocular = gap((LEFT_CORNERS[1], RIGHT_CORNERS[1]))
+    if interocular < 1e-6:
+        return float("nan")
+    lids = [gap(pair) for pair in LEFT_LID_PAIRS] + [gap(pair) for pair in RIGHT_LID_PAIRS]
+    return float(np.mean(lids) / interocular)
 
 
 class BlinkDetector:
@@ -104,8 +128,8 @@ class BlinkDetector:
         self._cap = None
         self._face_mesh = None
 
-        # detection state
-        self._ear_history: deque[float] = deque(maxlen=600)
+        # detection state: (timestamp, openness) over the last few seconds only
+        self._history: deque[tuple[float, float]] = deque()
         self._blink_times: deque[float] = deque()
         self._closed_since: Optional[float] = None
         self._eyes_closed = False
@@ -278,11 +302,14 @@ class BlinkDetector:
                 import mediapipe as mp
 
                 mp_face_mesh = mp.solutions.face_mesh
-            # refine_landmarks adds the iris/lips attention mesh - roughly doubles the
-            # cost per frame and none of those points are used here.
+            # refine_landmarks runs a dedicated high-resolution model over each eye.
+            # Measured on the same frames, side by side: it costs the same 5.5 ms per
+            # frame as the base mesh, and it deepens a blink in the signal from ~0.20
+            # to ~0.45 below the local baseline - the difference between blinks that
+            # are buried in landmark jitter and blinks that are unmistakable.
             self._face_mesh = mp_face_mesh.FaceMesh(
                 max_num_faces=1,
-                refine_landmarks=False,
+                refine_landmarks=True,
                 # Low, on purpose: the camera is often off to one side of the screen
                 # the person is actually looking at, so the face is never frontal.
                 min_detection_confidence=0.3,
@@ -303,11 +330,20 @@ class BlinkDetector:
         while self._blink_times and now - self._blink_times[0] > 60.0:
             self._blink_times.popleft()
 
+    def _baseline(self) -> float:
+        """Your own eyes, as they have looked over the last few seconds.
+
+        A minute-long median cannot keep up: leaning in, turning towards another screen
+        or MediaPipe re-acquiring the face all shift the measurement by more than a
+        blink does, and the reminder then fires on posture instead of dry eyes.
+        """
+        if len(self._history) < CALIBRATION_SAMPLES:
+            return float("nan")
+        return float(np.median([value for _, value in self._history]))
+
     def _threshold(self) -> float:
-        if len(self._ear_history) < CALIBRATION_SAMPLES:
-            return FALLBACK_EAR_THRESHOLD
-        baseline = float(np.median(self._ear_history))
-        return baseline * self.config.sensitivity
+        baseline = self._baseline()
+        return baseline * self.config.sensitivity if baseline == baseline else float("nan")
 
     def _blocking_state(self) -> Optional[str]:
         """Reasons to keep the camera off, in priority order."""
@@ -390,7 +426,7 @@ class BlinkDetector:
                 self._stop.wait(1.0)
                 continue
 
-            self._process(frame, loop_started)
+            self._process(self._downscale(frame), loop_started)
 
             frame_budget = 1.0 / max(self.config.fps, 1)  # re-read: fps is user-settable
             elapsed = time.monotonic() - loop_started
@@ -398,6 +434,15 @@ class BlinkDetector:
                 self._stop.wait(frame_budget - elapsed)
 
         self._release_camera()
+
+    def _downscale(self, frame):
+        """Shrink the captured frame to the size the landmark model actually wants."""
+        width = frame.shape[1]
+        target = self.config.process_width
+        if width <= target:
+            return frame
+        height = int(round(frame.shape[0] * target / width))
+        return cv2.resize(frame, (target, height), interpolation=cv2.INTER_AREA)
 
     def _process(self, frame, now: float) -> None:
         dt = min(now - self._last_tick, 2.0)
@@ -416,14 +461,11 @@ class BlinkDetector:
             self._probe_started = None
             self._failed_probes = 0
             landmarks = results.multi_face_landmarks[0].landmark
-            indices = LEFT_EYE + RIGHT_EYE
-            points = np.array(
-                [(landmarks[i].x, landmarks[i].y * aspect) for i in indices],
-                dtype=np.float64,
-            )
-            ear = ear_now = (_ear(points[:6]) + _ear(points[6:])) / 2.0
-            self._update_blink_state(ear, now)
-            self._record_baseline(ear, now)
+            value = _openness(landmarks, aspect)
+            if value == value:  # not NaN
+                ear_now = value
+                self._update_blink_state(value, now)
+                self._record_baseline(value, now)
 
         face_present = now - self._last_face < FACE_GRACE
 
@@ -431,25 +473,26 @@ class BlinkDetector:
             self._render_preview(frame, results, ear_now, face_present, now)
 
         if self._on_frame is not None:
-            self._on_frame(
-                {
-                    "t": now,
-                    "face": int(bool(results.multi_face_landmarks)),
-                    "ear": ear_now,
-                    "baseline": float(np.median(self._ear_history)) if self._ear_history else float("nan"),
-                    "threshold": self._threshold(),
-                    "closed": int(self._eyes_closed),
-                    "blinks": self._blinks,
-                    "reminders": self._reminders,
-                    "since_blink": now - self._last_blink,
-                    "state": self._state,
-                }
-            )
+            row = {
+                "t": now,
+                "face": int(bool(results.multi_face_landmarks)),
+                "ear": ear_now,
+                "baseline": self._baseline(),
+                "threshold": self._threshold(),
+                "closed": int(self._eyes_closed),
+                "blinks": self._blinks,
+                "reminders": self._reminders,
+                "since_blink": now - self._last_blink,
+                "state": self._state,
+            }
+            if results.multi_face_landmarks:
+                row.update(self._landmark_features(results.multi_face_landmarks[0].landmark, aspect))
+            self._on_frame(row)
 
         if face_present:
             self._active_seconds += dt
             self._face_seconds_since_blink += dt
-            calibrating = len(self._ear_history) < CALIBRATION_SAMPLES
+            calibrating = len(self._history) < CALIBRATION_SAMPLES
             self._state = State.STARTING if calibrating else State.ACTIVE
             if not calibrating:
                 self._maybe_remind(now)
@@ -474,6 +517,35 @@ class BlinkDetector:
         elif not probing and away_for > self.config.absence_timeout:
             self._enter_standby(now)
 
+    def _landmark_features(self, landmarks, aspect: float) -> dict:
+        """Raw geometry for offline work on the detector - not used by detection itself."""
+
+        def point(index: int) -> np.ndarray:
+            lm = landmarks[index]
+            return np.array([lm.x, lm.y * aspect], dtype=np.float64)
+
+        def gap(pair) -> float:
+            return float(np.linalg.norm(point(pair[0]) - point(pair[1])))
+
+        features: dict[str, float] = {}
+        for side, pairs, corners in (
+            ("l", LEFT_LID_PAIRS, LEFT_CORNERS),
+            ("r", RIGHT_LID_PAIRS, RIGHT_CORNERS),
+        ):
+            for number, pair in enumerate(pairs, start=1):
+                features[f"{side}v{number}"] = gap(pair)
+            features[f"{side}w"] = gap(corners)
+
+        # Scale references that do not depend on the eyelids at all, and a yaw proxy:
+        # a head turned away compresses eye width but not the lid gap.
+        features["interocular"] = gap((LEFT_CORNERS[1], RIGHT_CORNERS[1]))
+        features["face_height"] = gap((FOREHEAD, CHIN))
+        eye_mid = (point(LEFT_CORNERS[1]) + point(RIGHT_CORNERS[1])) / 2.0
+        features["nose_offset"] = float(
+            (point(NOSE_TIP)[0] - eye_mid[0]) / max(features["interocular"], 1e-6)
+        )
+        return features
+
     def _render_preview(self, frame, results, ear: float, face_present: bool, now: float) -> None:
         """Draw what the detector is thinking: the eyes it found, the live EAR against the
         threshold, a running blink count, and a flash the moment a blink is registered."""
@@ -495,10 +567,14 @@ class BlinkDetector:
             cv2.rectangle(view, (0, 0), (width - 1, height - 1), colour, 8 if fresh_blink else 3)
 
             if face_present:
-                cv2.putText(
-                    view, f"EAR {ear:.2f}  thr {self._threshold():.2f}",
-                    (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, white, 2,
+                baseline = self._baseline()
+                relative = ear / baseline if baseline == baseline and baseline > 0 else float("nan")
+                caption = (
+                    f"open {relative:.2f}  blink below {self.config.sensitivity:.2f}"
+                    if relative == relative
+                    else "calibrating…"
                 )
+                cv2.putText(view, caption, (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, white, 2)
             else:
                 cv2.putText(view, "NO FACE", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, red, 2)
 
@@ -533,12 +609,12 @@ class BlinkDetector:
         Crossing the line is exactly what counts as a blink, so watching the marker dip past
         it tells you immediately whether the camera can see your eyelids at all.
         """
-        if not self._ear_history:
+        baseline = self._baseline()
+        if baseline != baseline:
             return
         height, width = view.shape[:2]
-        baseline = float(np.median(self._ear_history))
         threshold = self._threshold()
-        low, high = baseline * 0.35, baseline * 1.15
+        low, high = baseline * 0.45, baseline * 1.20
         if high <= low:
             return
 
@@ -571,21 +647,25 @@ class BlinkDetector:
         self._probe_started = None
         self._release_camera()
 
-    def _record_baseline(self, ear: float, now: float) -> None:
+    def _record_baseline(self, value: float, now: float) -> None:
         """Keep the rolling baseline made of open-eye frames only.
 
         Feeding it every frame lets a long closure - or a burst of blinking - drag the
         median down and quietly raise the bar for the next blink.
         """
-        if len(self._ear_history) < CALIBRATION_SAMPLES:
-            self._ear_history.append(ear)
-            return
-        if not self._eyes_closed:
-            self._ear_history.append(ear)
-        elif self._closed_since is not None and now - self._closed_since > STUCK_CLOSED_SECONDS:
-            # Below the threshold for seconds on end: the face moved, the light changed,
-            # or the baseline is simply wrong. Let it re-learn instead of going deaf.
-            self._ear_history.append(ear)
+        stuck = (
+            self._eyes_closed
+            and self._closed_since is not None
+            and now - self._closed_since > STUCK_CLOSED_SECONDS
+        )
+        # "stuck" means the eyes have read as closed for seconds on end: the face moved,
+        # the light changed, or the baseline is simply wrong. Re-learn instead of going deaf.
+        if len(self._history) < CALIBRATION_SAMPLES or not self._eyes_closed or stuck:
+            self._history.append((now, value))
+        while self._history and now - self._history[0][0] > BASELINE_SECONDS:
+            if len(self._history) <= CALIBRATION_SAMPLES:
+                break
+            self._history.popleft()
 
     def _update_blink_state(self, ear: float, now: float) -> None:
         threshold = self._threshold()
@@ -606,8 +686,8 @@ class BlinkDetector:
                 self._blinks += 1
                 self._blink_times.append(now)
                 self._last_blink_event = now
-                baseline = float(np.median(self._ear_history)) if self._ear_history else 0.0
-                if baseline > 0:
+                baseline = self._baseline()
+                if baseline == baseline and baseline > 0:
                     self._last_blink_depth = (baseline - deepest) / baseline
                     self._blink_depths.append(self._last_blink_depth)
         elif self._eyes_closed:
