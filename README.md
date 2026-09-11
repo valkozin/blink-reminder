@@ -72,8 +72,13 @@ Click the eye in the menu bar:
 | **Start at login** | Installs/removes the launchd agent |
 | **Today’s statistics…** | Screen time, blinks, average rate, reminders |
 
-Menu bar icon: 👁 watching · ⏸ paused · 💤 standing by · 🙈 you are at the keyboard but the
-camera cannot find your face · ⚠️ camera problem.
+Menu bar icon: 👁 watching · ⏸ paused · 💤 standing by · 🙈 the camera cannot see you, or can
+see you but cannot measure blinks · ⚠️ camera problem.
+
+**The app stops reminding you when it cannot measure.** Nobody goes two minutes without
+blinking, so if a face is in frame and not one blink is measurable in all that time, the eyelids
+are hidden by the camera angle. Reminders would be guesswork, so they are suspended until a real
+blink is seen again and the menu says why.
 
 ### Point the camera at your face
 
@@ -87,6 +92,16 @@ keyboard the app says so outright.
 Open **Camera › Check camera framing…** and move the camera (or yourself) until the border
 around the preview turns green and dots appear on your eyes. That preview keeps running even
 while the app is paused, so you can aim it whenever.
+
+### If the reminders feel wrong
+
+Check the menu first: **Remind after…** may be set to 6 seconds, which nudges you as often as
+the 30-second floor between reminders allows. 12 is the default and 15–20 is gentle.
+
+If it seems to miss blinks, record a trace and look at the numbers rather than guessing — see
+*Development* below. On a well-aimed camera a real blink shows as a 35–60% drop below the
+baseline; if the deepest dip in a whole minute is 10–15%, the camera angle is the problem, not
+the threshold.
 
 ### Command line
 

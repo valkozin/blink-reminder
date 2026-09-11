@@ -37,6 +37,7 @@ EN = {
     "preview_title": "Blink Reminder - camera",
     "camera": "Camera",
     "state_unseen": "Cannot see you - check the camera",
+    "state_unusable": "Cannot measure blinks - check the camera angle",
     "unseen_title": "Blink Reminder cannot see you",
     "unseen_body": (
         "You have been at the keyboard for a few minutes, but the camera has not found "
@@ -74,6 +75,16 @@ EN = {
         "Open System Settings › Privacy & Security › Camera, allow the entry for Python "
         "(or Terminal, if you started it from there), then start Blink Reminder again."
     ),
+    "unusable_body": (
+        "Your face is in the frame, but not one blink has been measurable for two "
+        "minutes - and nobody goes two minutes without blinking.\n\n"
+        "The camera is almost certainly looking at you from too sharp an angle to see "
+        "your eyelids move: a laptop standing beside the monitor you are looking at "
+        "does exactly this.\n\n"
+        "Reminders are paused until blinks become measurable again, because anything "
+        "sent now would be guesswork. Open “Check camera framing…” and turn the camera "
+        "towards your face."
+    ),
     "autostart_error_title": "Could not change the login item",
     "dur_hours": "h",
     "dur_minutes": "min",
@@ -110,6 +121,7 @@ RU = {
     "preview_title": "Blink Reminder — камера",
     "camera": "Камера",
     "state_unseen": "Не вижу вас — проверьте камеру",
+    "state_unusable": "Не различаю моргания — поверните камеру",
     "unseen_title": "Blink Reminder вас не видит",
     "unseen_body": (
         "Вы уже несколько минут за клавиатурой, но камера всё это время не находит "
@@ -146,6 +158,15 @@ RU = {
         "Доступ к камере для Blink Reminder выключен.\n\n"
         "Откройте Настройки › Конфиденциальность и безопасность › Камера, разрешите доступ "
         "для Python (или для Терминала, если запускали оттуда) и запустите приложение заново."
+    ),
+    "unusable_body": (
+        "Ваше лицо в кадре, но за две минуты не удалось измерить ни одного моргания — "
+        "а две минуты без моргания человек не выдерживает.\n\n"
+        "Почти наверняка камера смотрит на вас под слишком острым углом и не видит, "
+        "как опускаются веки: так бывает, когда ноутбук стоит сбоку от монитора, "
+        "в который вы смотрите.\n\n"
+        "Напоминания приостановлены — сейчас они были бы выдумкой. Откройте "
+        "«Проверить кадр камеры…» и поверните камеру к лицу."
     ),
     "autostart_error_title": "Не удалось изменить автозапуск",
     "dur_hours": "ч",

@@ -34,6 +34,10 @@ STANDBY_MIN_SLEEP = 20.0        # but never reopen the camera sooner than this
 PROBE_BACKOFF_AFTER = 3         # fruitless probes before backing right off
 PROBE_BACKOFF_SLEEP = 300.0     # ...to one look every five minutes
 UNSEEN_WARNING_AFTER = 180.0    # at the keyboard, unseen this long: say so
+# Nobody goes two minutes without blinking. If the face is right there and not one
+# blink is measurable in all that time, the camera angle is hiding the eyelids - the
+# signal is unusable and reminders based on it would be invented, so we stop.
+SIGNAL_TIMEOUT = 120.0
 
 
 class State:
@@ -58,6 +62,7 @@ class Snapshot:
     paused_until: Optional[float] = None
     seconds_since_face: float = 0.0
     unseen_at_keyboard: bool = False  # you are typing, but the camera cannot find you
+    signal_unusable: bool = False     # your face is visible but blinks are not measurable
 
 
 def _ear(points: np.ndarray) -> float:
@@ -109,6 +114,8 @@ class BlinkDetector:
 
         self._preview_wanted = False
         self._preview_jpeg: Optional[bytes] = None
+
+        self._face_seconds_since_blink = 0.0
 
         self._state = State.STARTING
         self._blinks = 0
@@ -193,12 +200,17 @@ class BlinkDetector:
             active_seconds=self._active_seconds,
             paused_until=self._paused_until,
             seconds_since_face=since_face,
+            signal_unusable=self.signal_unusable,
             unseen_at_keyboard=(
                 since_face > UNSEEN_WARNING_AFTER
                 and system.idle_seconds() < 60.0
                 and self._state in (State.NO_FACE, State.STANDBY)
             ),
         )
+
+    @property
+    def signal_unusable(self) -> bool:
+        return self._face_seconds_since_blink > SIGNAL_TIMEOUT
 
     # ------------------------------------------------------------------ camera
 
@@ -412,6 +424,7 @@ class BlinkDetector:
 
         if face_present:
             self._active_seconds += dt
+            self._face_seconds_since_blink += dt
             calibrating = len(self._ear_history) < CALIBRATION_SAMPLES
             self._state = State.STARTING if calibrating else State.ACTIVE
             if not calibrating:
@@ -424,6 +437,7 @@ class BlinkDetector:
         self._state = State.NO_FACE
         if now - self._last_face > ABSENCE_RESET:
             self._reset_timers(now)
+            self._face_seconds_since_blink = 0.0
         else:
             self._last_blink += dt
             if self._last_reminder:
@@ -497,6 +511,7 @@ class BlinkDetector:
             self._eyes_closed = False
             self._closed_since = None
             self._last_blink = now
+            self._face_seconds_since_blink = 0.0
             if duration <= MAX_BLINK_SECONDS:
                 self._blinks += 1
                 self._blink_times.append(now)
@@ -504,6 +519,8 @@ class BlinkDetector:
             self._last_blink = now
 
     def _maybe_remind(self, now: float) -> None:
+        if self.signal_unusable:
+            return  # we are not measuring anything; a reminder now would be a guess
         if now - self._last_blink < self.config.interval:
             return
         if now - self._last_reminder < self.config.min_reminder_gap:

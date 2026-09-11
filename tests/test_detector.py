@@ -222,6 +222,37 @@ def test_baseline_relearns_when_the_eyes_look_closed_for_good():
     assert detector.snapshot().blinks >= 1
 
 
+def test_reminders_stop_when_blinks_stop_being_measurable():
+    """A camera angle that hides the eyelids must silence the app, not make it invent."""
+    import blinkreminder.detector as module
+
+    detector, mesh, reminders, _ = _detector(interval=12.0, min_reminder_gap=30.0)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    # Eyes visibly open the whole time, with only the shallow wobble a bad angle gives.
+    now = _feed(detector, mesh, 0.29, module.SIGNAL_TIMEOUT + 10, start=now)
+    assert detector.snapshot().signal_unusable, "two minutes without a measurable blink"
+    fired_by_then = len(reminders)
+    assert fired_by_then > 0, "it does try before giving up"
+    _feed(detector, mesh, 0.29, 120.0, start=now)
+    assert len(reminders) == fired_by_then, "no more guesses once the signal is unusable"
+
+
+def test_one_measurable_blink_brings_the_app_back():
+    import blinkreminder.detector as module
+
+    detector, mesh, reminders, _ = _detector(interval=12.0, min_reminder_gap=30.0)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    now = _feed(detector, mesh, 0.29, module.SIGNAL_TIMEOUT + 10, start=now)
+    assert detector.snapshot().signal_unusable
+
+    now = _feed(detector, mesh, 0.15, 0.3, start=now)      # the camera gets turned; a real blink
+    now = _feed(detector, mesh, 0.30, 1.0, start=now)
+    assert not detector.snapshot().signal_unusable
+    before = len(reminders)
+    _feed(detector, mesh, 0.30, 45.0, start=now)
+    assert len(reminders) > before, "reminders resume once blinks are measurable again"
+
+
 def test_pause_and_resume():
     detector, _, _, _ = _detector()
     assert detector.paused is False

@@ -27,10 +27,11 @@ ICONS = {
     State.ERROR: "⚠️",
 }
 
-SENSITIVITY_LEVELS = (("sensitivity_low", 0.70), ("sensitivity_normal", 0.78), ("sensitivity_high", 0.86))
+SENSITIVITY_LEVELS = (("sensitivity_low", 0.74), ("sensitivity_normal", 0.82), ("sensitivity_high", 0.88))
 VOLUME_LEVELS = (15, 25, 35, 50, 75, 100)
 SNOOZE_CHOICES = (("snooze_15", 15), ("snooze_30", 30), ("snooze_60", 60))
 UNSEEN_ICON = "🙈"
+UNUSABLE_ICON = "🙈"
 
 
 class BlinkReminderApp(rumps.App):
@@ -339,6 +340,8 @@ class BlinkReminderApp(rumps.App):
         self._flush_stats()
 
     def _status_text(self, snap) -> str:
+        if snap.signal_unusable:
+            return t("state_unusable")
         if snap.unseen_at_keyboard:
             return t("state_unseen")
         if snap.state == State.PAUSED and snap.paused_until:
