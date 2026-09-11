@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blink-reminder"
+version = "1.0.0"
+description = "A quiet menu bar reminder to blink, for people who sit at a screen all day."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9,<3.13"
+dependencies = [
+    "opencv-python>=4.8.0",
+    "mediapipe==0.10.21",
+    "numpy>=1.24.0,<2.0",
+    "rumps>=0.4.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=9.0; sys_platform == 'darwin'",
+    "pyobjc-framework-AVFoundation>=9.0; sys_platform == 'darwin'",
+]
+
+[project.scripts]
+blink-reminder = "blinkreminder.__main__:main"
+
+[tool.setuptools]
+packages = ["blinkreminder"]

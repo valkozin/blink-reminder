@@ -1,4 +1,7 @@
+# Runtime dependencies. Python 3.9-3.12 (MediaPipe does not build for 3.13+ yet).
 opencv-python>=4.8.0
 mediapipe==0.10.21
-numpy>=1.24.0
-plyer>=2.1.0
+numpy>=1.24.0,<2.0
+rumps>=0.4.0; sys_platform == "darwin"
+pyobjc-framework-Quartz>=9.0; sys_platform == "darwin"
+pyobjc-framework-AVFoundation>=9.0; sys_platform == "darwin"
