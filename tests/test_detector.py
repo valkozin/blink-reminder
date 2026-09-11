@@ -253,6 +253,25 @@ def test_one_measurable_blink_brings_the_app_back():
     assert len(reminders) > before, "reminders resume once blinks are measurable again"
 
 
+def test_signal_quality_reflects_how_deep_the_blinks_look():
+    """Shallow blinks mean the camera is seeing the eyelids at an angle."""
+    detector, mesh, _, _ = _detector(sensitivity=0.82)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    assert detector.signal_quality == "unknown", "no verdict before there is evidence"
+
+    for _ in range(6):                                     # barely-there dips: 20% below
+        now = _feed(detector, mesh, 0.24, 0.2, start=now)
+        now = _feed(detector, mesh, 0.30, 1.0, start=now)
+    assert detector.snapshot().signal_quality == "weak"
+
+    detector2, mesh2, _, _ = _detector(sensitivity=0.82)
+    now = _feed(detector2, mesh2, 0.30, 6.0, start=FAKE_START)
+    for _ in range(6):                                     # proper blinks: 50% below
+        now = _feed(detector2, mesh2, 0.15, 0.2, start=now)
+        now = _feed(detector2, mesh2, 0.30, 1.0, start=now)
+    assert detector2.snapshot().signal_quality == "good"
+
+
 def test_pause_and_resume():
     detector, _, _, _ = _detector()
     assert detector.paused is False

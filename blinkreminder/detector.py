@@ -38,6 +38,10 @@ UNSEEN_WARNING_AFTER = 180.0    # at the keyboard, unseen this long: say so
 # blink is measurable in all that time, the camera angle is hiding the eyelids - the
 # signal is unusable and reminders based on it would be invented, so we stop.
 SIGNAL_TIMEOUT = 120.0
+# How far below the baseline a blink reaches says how well the camera sees the eyelids.
+# Well-aimed: 35-60%. Steep angle: barely past the threshold, and half the blinks are lost.
+WEAK_BLINK_DEPTH = 0.25
+MIN_DEPTH_SAMPLES = 5
 
 
 class State:
@@ -63,6 +67,7 @@ class Snapshot:
     seconds_since_face: float = 0.0
     unseen_at_keyboard: bool = False  # you are typing, but the camera cannot find you
     signal_unusable: bool = False     # your face is visible but blinks are not measurable
+    signal_quality: str = "unknown"    # good | weak | unknown - how clearly blinks show up
 
 
 def _ear(points: np.ndarray) -> float:
@@ -116,6 +121,8 @@ class BlinkDetector:
         self._preview_jpeg: Optional[bytes] = None
 
         self._face_seconds_since_blink = 0.0
+        self._blink_depths: deque[float] = deque(maxlen=30)
+        self._closed_min_ear: Optional[float] = None
 
         self._state = State.STARTING
         self._blinks = 0
@@ -201,6 +208,7 @@ class BlinkDetector:
             paused_until=self._paused_until,
             seconds_since_face=since_face,
             signal_unusable=self.signal_unusable,
+            signal_quality=self.signal_quality,
             unseen_at_keyboard=(
                 since_face > UNSEEN_WARNING_AFTER
                 and system.idle_seconds() < 60.0
@@ -211,6 +219,13 @@ class BlinkDetector:
     @property
     def signal_unusable(self) -> bool:
         return self._face_seconds_since_blink > SIGNAL_TIMEOUT
+
+    @property
+    def signal_quality(self) -> str:
+        """How deep the blinks look - a proxy for whether the camera sees the eyelids."""
+        if len(self._blink_depths) < MIN_DEPTH_SAMPLES:
+            return "unknown"
+        return "weak" if float(np.median(self._blink_depths)) < WEAK_BLINK_DEPTH else "good"
 
     # ------------------------------------------------------------------ camera
 
@@ -505,18 +520,26 @@ class BlinkDetector:
         if not self._eyes_closed and ear < threshold:
             self._eyes_closed = True
             self._closed_since = now
+            self._closed_min_ear = ear
             self._last_blink = now  # closed eyes are moist eyes - nothing to remind about
         elif self._eyes_closed and ear > threshold * REOPEN_MARGIN:
             duration = now - (self._closed_since or now)
+            deepest = self._closed_min_ear if self._closed_min_ear is not None else ear
             self._eyes_closed = False
             self._closed_since = None
+            self._closed_min_ear = None
             self._last_blink = now
             self._face_seconds_since_blink = 0.0
             if duration <= MAX_BLINK_SECONDS:
                 self._blinks += 1
                 self._blink_times.append(now)
+                baseline = float(np.median(self._ear_history)) if self._ear_history else 0.0
+                if baseline > 0:
+                    self._blink_depths.append((baseline - deepest) / baseline)
         elif self._eyes_closed:
             self._last_blink = now
+            if self._closed_min_ear is None or ear < self._closed_min_ear:
+                self._closed_min_ear = ear
 
     def _maybe_remind(self, now: float) -> None:
         if self.signal_unusable:

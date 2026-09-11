@@ -335,7 +335,12 @@ class BlinkReminderApp(rumps.App):
             self.title = icon
 
         self.status_item.title = self._status_text(snap)
-        self.rate_item.title = t("rate", rate=f"{snap.rate:g}") if snap.rate is not None else t("rate_unknown")
+        if snap.signal_quality == "weak":
+            self.rate_item.title = t("signal_weak")
+        elif snap.rate is not None:
+            self.rate_item.title = t("rate", rate=f"{snap.rate:g}")
+        else:
+            self.rate_item.title = t("rate_unknown")
         self.pause_item.title = t("resume") if self.detector.paused else t("pause")
         self._flush_stats()
 

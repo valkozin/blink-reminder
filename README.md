@@ -59,7 +59,7 @@ Click the eye in the menu bar:
 
 | Menu item | What it does |
 |---|---|
-| *Watching your blinks* | Current state and the blink rate over the last minute (15–20/min is healthy) |
+| *Watching your blinks* | Current state, and the blink rate over the last minute (15–20/min is healthy) or a warning that blinks are barely visible |
 | **Pause / Resume** | Stops the reminders and closes the camera |
 | **Pause for…** | 15, 30 or 60 minutes, then it resumes by itself |
 | **Remind after…** | 6–30 seconds without a blink (default: 12) |
