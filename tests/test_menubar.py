@@ -23,6 +23,29 @@ import blinkreminder.control as control_module
 import blinkreminder.detector as detector_module
 import blinkreminder.stats as stats_module
 
+# Never let a test depend on the machine it runs on. The detector pauses itself while the
+# screen is locked or the display sleeps, so the thread tests used to pass only while the
+# developer's screen happened to be on - and a CI runner has no screen at all.
+import blinkreminder.system as system_module
+
+system_module.screen_is_locked = lambda: False
+system_module.display_is_asleep = lambda: False
+system_module.idle_seconds = lambda: 0.0
+
+# rumps.alert is modal: it blocks until somebody clicks OK, and in a test nobody will.
+# Record what would have been shown instead, so tests can check the explanation arrived.
+import rumps
+
+ALERTS: list[str] = []
+
+
+def _record_alert(title=None, message="", ok=None, cancel=None, other=None, icon_path=None):
+    ALERTS.append(title)
+    return 1
+
+
+rumps.alert = _record_alert
+
 
 class _FakeCapture:
     opened = 0
@@ -57,10 +80,6 @@ def _app():
     config_module.STATS_PATH = tmp / "stats.json"
     stats_module.STATS_PATH = tmp / "stats.json"
     stats_module.CONFIG_DIR = tmp
-    control_module.COMMAND_PATH = tmp / "command"
-    control_module.STATE_PATH = tmp / "state.json"
-    control_module.LOCK_PATH = tmp / "running.lock"
-    control_module.PAUSE_PATH = tmp / "pause.json"
 
     detector_module.cv2.VideoCapture = _FakeCapture
     NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
@@ -263,11 +282,29 @@ def test_the_timing_line_never_counts_when_nothing_can_fire():
         mesh.ear = 0.30                                   # face back, but blinks unmeasurable
         time.sleep(0.5)
         app.detector._face_seconds_since_blink = detector_module.SIGNAL_TIMEOUT + 1
+        ALERTS.clear()
         app._tick()
         assert app.timing_item.title.startswith("Blinks not measurable"), app.timing_item.title
         assert "of 6" not in app.timing_item.title
+        assert len(ALERTS) == 1, "the reason should be explained once, not left to guesswork"
+        app._tick()
+        assert len(ALERTS) == 1, "and not again on every tick"
     finally:
         app.detector.stop()
+
+
+def test_the_on_screen_hint_is_centred():
+    """Bug: the label was aligned with a hard-coded 2, which is right-aligned on Apple
+    silicon, so 'Blink' sat against the right edge and was clipped."""
+    from AppKit import NSApplication, NSTextAlignmentCenter
+
+    from blinkreminder.alerts import _Hud
+
+    NSApplication.sharedApplication()
+    hud = _Hud()
+    hud._build()
+    assert hud._label.alignment() == NSTextAlignmentCenter
+    assert hud._label.frame().size.width == hud.WIDTH, "the label must span the whole pill"
 
 
 def test_state_is_published_for_the_status_command():

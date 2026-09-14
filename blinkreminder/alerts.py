@@ -86,6 +86,7 @@ class _Hud:
             NSColor,
             NSFont,
             NSScreenSaverWindowLevel,
+            NSTextAlignmentCenter,
             NSTextField,
             NSWindow,
             NSWindowCollectionBehaviorCanJoinAllSpaces,
@@ -122,7 +123,9 @@ class _Hud:
         label.setDrawsBackground_(False)
         label.setEditable_(False)
         label.setSelectable_(False)
-        label.setAlignment_(2)  # NSTextAlignmentCenter
+        # The named constant, never a number: AppKit uses iOS values on Apple silicon,
+        # where 2 means *right*-aligned - which is exactly how the hint shipped.
+        label.setAlignment_(NSTextAlignmentCenter)
         label.setTextColor_(NSColor.whiteColor())
         label.setFont_(NSFont.systemFontOfSize_weight_(19.0, 0.23))  # semibold
 

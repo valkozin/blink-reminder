@@ -14,10 +14,7 @@ import blinkreminder.control as control
 def _isolate():
     """Point the module at a throwaway directory."""
     tmp = Path(tempfile.mkdtemp())
-    control.CONFIG_DIR = tmp
-    control.COMMAND_PATH = tmp / "command"
-    control.STATE_PATH = tmp / "state.json"
-    control.LOCK_PATH = tmp / "running.lock"
+    control.CONFIG_DIR = tmp  # every file follows it; see test_every_file_follows_config_dir
     return tmp
 
 
@@ -93,7 +90,25 @@ def test_a_pause_that_has_already_expired_is_dropped():
     _isolate()
     control.save_pause(time.time() - 1)
     assert control.load_pause() == (False, None), "waking up should not restore a lapsed pause"
-    assert not control.PAUSE_PATH.exists(), "and the stale file is cleaned up"
+    assert not control.pause_path().exists(), "and the stale file is cleaned up"
+
+
+def test_every_file_follows_config_dir():
+    """Bug: the pause file's path was fixed at import time, so sandboxing CONFIG_DIR left it
+    pointing at the real application folder. On a developer's Mac the suite wrote, and then
+    deleted, the running app's real pause; on a fresh machine it simply failed."""
+    import time
+
+    tmp = _isolate()
+    control.save_pause(time.time() + 60)
+    control.send("pause")
+    control.publish({"state": "active"})
+    for path in (control.pause_path(), control.command_path(), control.state_path(), control.lock_path()):
+        assert path.parent == tmp, f"{path} escaped the sandbox"
+    assert {"pause.json", "command", "state.json"} <= {p.name for p in tmp.iterdir()}
+
+    fixed = [name for name, value in vars(control).items() if isinstance(value, Path) and name != "CONFIG_DIR"]
+    assert not fixed, f"paths frozen at import time would escape a sandbox again: {fixed}"
 
 
 def test_state_round_trip():

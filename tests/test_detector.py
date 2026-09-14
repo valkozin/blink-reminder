@@ -18,10 +18,15 @@ from blinkreminder.detector import CALIBRATION_SAMPLES, BlinkDetector, State
 # Never let a test touch the real app's runtime files.
 _SANDBOX = Path(tempfile.mkdtemp())
 control_module.CONFIG_DIR = _SANDBOX
-control_module.COMMAND_PATH = _SANDBOX / "command"
-control_module.STATE_PATH = _SANDBOX / "state.json"
-control_module.LOCK_PATH = _SANDBOX / "running.lock"
-control_module.PAUSE_PATH = _SANDBOX / "pause.json"
+
+# Never let a test depend on the machine it runs on. The detector pauses itself while the
+# screen is locked or the display sleeps, so the thread tests used to pass only while the
+# developer's screen happened to be on - and a CI runner has no screen at all.
+import blinkreminder.system as system_module
+
+system_module.screen_is_locked = lambda: False
+system_module.display_is_asleep = lambda: False
+system_module.idle_seconds = lambda: 0.0
 
 FRAME = np.zeros((480, 480, 3), dtype=np.uint8)  # square, so the EAR aspect fix is a no-op
 FAKE_START = 1000.0
@@ -466,6 +471,54 @@ def test_failed_probes_are_counted_and_reset():
     assert detector._failed_probes == 1
     _feed(detector, mesh, 0.30, 1.0, start=now)                 # found again
     assert detector._failed_probes == 0
+
+
+def test_a_locked_screen_stops_watching_and_frees_the_camera():
+    """Pinned on purpose: this was only ever exercised by accident, whenever the developer's
+    screen happened to lock while the suite ran."""
+    import blinkreminder.detector as module
+
+    detector, _, _, _ = _detector()
+    counts = {"opened": 0, "released": 0}
+
+    class _Capture:
+        def __init__(self, *_args):
+            counts["opened"] += 1
+            self._open = True
+
+        def isOpened(self):
+            return self._open
+
+        def set(self, *_args):
+            return True
+
+        def read(self):
+            return True, FRAME
+
+        def release(self):
+            counts["released"] += 1
+            self._open = False
+
+    original = module.cv2.VideoCapture
+    module.cv2.VideoCapture = _Capture
+    try:
+        detector.start()
+        time.sleep(1.0)
+        assert counts["opened"] >= 1
+
+        system_module.screen_is_locked = lambda: True
+        time.sleep(1.5)
+        assert detector.snapshot().state == State.LOCKED
+        assert counts["released"] >= 1, "nobody is watching a locked screen"
+
+        system_module.screen_is_locked = lambda: False
+        time.sleep(1.5)
+        assert counts["opened"] >= 2, "unlocking must bring the camera back"
+        assert detector.snapshot().state in (State.STARTING, State.ACTIVE)
+    finally:
+        system_module.screen_is_locked = lambda: False
+        detector.stop()
+        module.cv2.VideoCapture = original
 
 
 def test_thread_releases_the_camera_while_paused():

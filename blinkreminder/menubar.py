@@ -317,7 +317,7 @@ class BlinkReminderApp(rumps.App):
 
     def on_quit(self, _=None) -> None:
         self._flush_stats(force=True)
-        control.STATE_PATH.unlink(missing_ok=True)
+        control.state_path().unlink(missing_ok=True)
         self.detector.stop()
         rumps.quit_application()
 

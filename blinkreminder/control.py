@@ -1,8 +1,7 @@
 """Talking to the running app from a terminal.
 
-The menu bar icon is not always reachable - macOS hides status items that do not fit
-the notch on a laptop screen, and it does so silently - so pausing or quitting must not
-depend on it. A one-line command file in the app's own directory is enough: no sockets,
+The menu bar icon is not always reachable - a crowded menu bar or a display being
+unplugged can leave it out of sight - so pausing or quitting must not depend on it. A one-line command file in the app's own directory is enough: no sockets,
 no ports, no permissions to grant, and nothing to leave running.
 """
 
@@ -13,16 +12,36 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Optional
 
 from .config import CONFIG_DIR
 
 log = logging.getLogger(__name__)
 
-COMMAND_PATH = CONFIG_DIR / "command"
-STATE_PATH = CONFIG_DIR / "state.json"
-PAUSE_PATH = CONFIG_DIR / "pause.json"
-LOCK_PATH = CONFIG_DIR / "running.lock"
+
+# Paths are worked out on every call rather than fixed at import. With constants, pointing
+# CONFIG_DIR somewhere else moved only the files someone remembered to repoint - and the
+# pause file, added later, was forgotten, so the test suite read and deleted the real app's
+# pause on a developer's machine.
+def _path(name: str) -> Path:
+    return CONFIG_DIR / name
+
+
+def command_path() -> Path:
+    return _path("command")
+
+
+def state_path() -> Path:
+    return _path("state.json")
+
+
+def pause_path() -> Path:
+    return _path("pause.json")
+
+
+def lock_path() -> Path:
+    return _path("running.lock")
 
 VALID_COMMANDS = ("quit", "pause", "resume", "toggle", "reload")
 
@@ -30,7 +49,7 @@ VALID_COMMANDS = ("quit", "pause", "resume", "toggle", "reload")
 def is_running() -> bool:
     """True when another process holds the instance lock."""
     try:
-        handle = open(LOCK_PATH, "a+")
+        handle = open(lock_path(), "a+")
     except OSError:
         return False
     try:
@@ -50,22 +69,22 @@ def send(command: str, argument: Optional[float] = None) -> None:
         raise ValueError(f"unknown command: {command}")
     text = command if argument is None else f"{command} {argument:g}"
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = COMMAND_PATH.with_suffix(".tmp")
+    tmp = command_path().with_suffix(".tmp")
     tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, COMMAND_PATH)
+    os.replace(tmp, command_path())
 
 
 def take() -> Optional[tuple[str, Optional[float]]]:
     """App side: read and clear a pending command, if any."""
     try:
-        text = COMMAND_PATH.read_text(encoding="utf-8").strip()
+        text = command_path().read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         return None
     except OSError as exc:
         log.warning("could not read the command file: %s", exc)
         return None
     finally:
-        COMMAND_PATH.unlink(missing_ok=True)
+        command_path().unlink(missing_ok=True)
 
     if not text:
         return None
@@ -87,16 +106,16 @@ def publish(state: dict) -> None:
     """App side: leave a snapshot on disk so `--status` has something to read."""
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = STATE_PATH.with_suffix(".tmp")
+        tmp = state_path().with_suffix(".tmp")
         tmp.write_text(json.dumps({**state, "updated": time.time()}, indent=2), encoding="utf-8")
-        os.replace(tmp, STATE_PATH)
+        os.replace(tmp, state_path())
     except OSError as exc:
         log.debug("could not publish state: %s", exc)
 
 
 def read_state() -> Optional[dict]:
     try:
-        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        state = json.loads(state_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return state if isinstance(state, dict) else None
@@ -112,21 +131,21 @@ def save_pause(until: Optional[float]) -> None:
     """`until` is a wall-clock deadline, or None for "until I say otherwise"."""
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = PAUSE_PATH.with_suffix(".tmp")
+        tmp = pause_path().with_suffix(".tmp")
         tmp.write_text(json.dumps({"until": until}), encoding="utf-8")
-        os.replace(tmp, PAUSE_PATH)
+        os.replace(tmp, pause_path())
     except OSError as exc:
         log.warning("could not remember the pause: %s", exc)
 
 
 def clear_pause() -> None:
-    PAUSE_PATH.unlink(missing_ok=True)
+    pause_path().unlink(missing_ok=True)
 
 
 def load_pause() -> tuple[bool, Optional[float]]:
     """Returns (paused, deadline). An expired pause clears itself."""
     try:
-        data = json.loads(PAUSE_PATH.read_text(encoding="utf-8"))
+        data = json.loads(pause_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False, None
     until = data.get("until") if isinstance(data, dict) else None
