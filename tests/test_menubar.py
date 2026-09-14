@@ -71,9 +71,13 @@ class _FakeCapture:
 
 def _app():
     """A real BlinkReminderApp with the camera and MediaPipe replaced."""
+    return _app_in(Path(tempfile.mkdtemp()))
+
+
+def _app_in(tmp):
+    """The same app, in a folder you choose - a second one simulates a restart."""
     from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 
-    tmp = Path(tempfile.mkdtemp())
     for module in (config_module, control_module):
         module.CONFIG_DIR = tmp
     config_module.CONFIG_PATH = tmp / "config.json"
@@ -282,13 +286,12 @@ def test_the_timing_line_never_counts_when_nothing_can_fire():
         mesh.ear = 0.30                                   # face back, but blinks unmeasurable
         time.sleep(0.5)
         app.detector._face_seconds_since_blink = detector_module.SIGNAL_TIMEOUT + 1
-        ALERTS.clear()
+        notices: list[str] = []
+        app.alerts.notice = lambda text, seconds=4.5: notices.append(text)
         app._tick()
         assert app.timing_item.title.startswith("Blinks not measurable"), app.timing_item.title
         assert "of 6" not in app.timing_item.title
-        assert len(ALERTS) == 1, "the reason should be explained once, not left to guesswork"
-        app._tick()
-        assert len(ALERTS) == 1, "and not again on every tick"
+        assert notices, "the reason should be explained, not left to guesswork"
     finally:
         app.detector.stop()
 
@@ -305,6 +308,52 @@ def test_the_on_screen_hint_is_centred():
     hud._build()
     assert hud._label.alignment() == NSTextAlignmentCenter
     assert hud._label.frame().size.width == hud.WIDTH, "the label must span the whole pill"
+
+
+def test_the_menu_bar_counter_stays_narrow_while_the_menu_keeps_the_total():
+    app, _, _ = _app()
+    try:
+        app.config.menubar_extra = "count"
+        app.detector._blinks = 938
+        app._tick()
+        assert app.title.endswith(" 38"), f"a rolling hundred, not 938: {app.title!r}"
+        assert "938" in app.rate_item.title, app.rate_item.title
+    finally:
+        app.detector.stop()
+
+
+def test_being_unseen_shows_a_passing_notice_not_a_dialog():
+    """Bug: unattended modal alerts stacked up - three windows waiting after lunch - and
+    each one froze the menu until it was clicked."""
+    app, _, tmp = _app()
+    notices: list[str] = []
+    app.alerts.notice = lambda text, seconds=4.5: notices.append(text)
+    try:
+        for _ in range(30):
+            time.sleep(0.1)
+            if app.detector.snapshot().state == "active":
+                break
+
+        ALERTS.clear()
+        app.detector._face_seconds_since_blink = detector_module.SIGNAL_TIMEOUT + 1
+        app._tick()
+        assert notices == ["🙈  Cannot see you blink"], notices
+        assert ALERTS == [], "nothing modal may appear on its own"
+
+        app._tick()
+        assert len(notices) == 1, "and not again on every tick"
+
+        # A restart must not start the counting over: that is how they piled up.
+        second, _, _ = _app_in(tmp)
+        try:
+            second.alerts.notice = lambda text, seconds=4.5: notices.append(text)
+            second.detector._face_seconds_since_blink = detector_module.SIGNAL_TIMEOUT + 1
+            second._tick()
+            assert len(notices) == 1, "the hour is remembered on disk, not in memory"
+        finally:
+            second.detector.stop()
+    finally:
+        app.detector.stop()
 
 
 def test_state_is_published_for_the_status_command():

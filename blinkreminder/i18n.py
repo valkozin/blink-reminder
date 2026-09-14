@@ -82,6 +82,10 @@ EN = {
         "Check that no other app is using it, and that camera access is granted in "
         "System Settings › Privacy & Security › Camera."
     ),
+    "unseen_notice": "🙈  Camera cannot see you",
+    "unusable_notice": "🙈  Cannot see you blink",
+    "camera_error_notice": "⚠️  Camera unavailable",
+    "camera_denied_notice": "⚠️  No camera access",
     "camera_denied_body": (
         "Camera access is turned off for Blink Reminder.\n\n"
         "Open System Settings › Privacy & Security › Camera, allow the entry for Python "
@@ -178,6 +182,10 @@ RU = {
         "Проверьте, что её не заняло другое приложение и что доступ разрешён в "
         "Настройках › Конфиденциальность и безопасность › Камера."
     ),
+    "unseen_notice": "🙈  Камера вас не видит",
+    "unusable_notice": "🙈  Не различаю моргания",
+    "camera_error_notice": "⚠️  Камера недоступна",
+    "camera_denied_notice": "⚠️  Нет доступа к камере",
     "camera_denied_body": (
         "Доступ к камере для Blink Reminder выключен.\n\n"
         "Откройте Настройки › Конфиденциальность и безопасность › Камера, разрешите доступ "

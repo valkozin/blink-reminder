@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -109,6 +110,24 @@ def test_every_file_follows_config_dir():
 
     fixed = [name for name, value in vars(control).items() if isinstance(value, Path) and name != "CONFIG_DIR"]
     assert not fixed, f"paths frozen at import time would escape a sandbox again: {fixed}"
+
+
+def test_a_notice_limit_survives_a_restart():
+    """Bug: the 'at most once an hour' counter lived in memory, so every restart re-armed
+    it. Step away for an afternoon and come back to a pile of dialogs to dismiss."""
+    import time
+
+    _isolate()
+    assert control.notice_due("unseen") is True
+    control.notice_shown("unseen")
+    assert control.notice_due("unseen") is False, "not twice in the same hour"
+    assert control.notice_due("something-else") is True, "kinds are counted apart"
+
+    # The record is on disk, so a fresh process sees it too.
+    seen = json.loads(control.notices_path().read_text())
+    seen["unseen"] = time.time() - 3601
+    control.notices_path().write_text(json.dumps(seen))
+    assert control.notice_due("unseen") is True, "and an hour later it may speak again"
 
 
 def test_state_round_trip():

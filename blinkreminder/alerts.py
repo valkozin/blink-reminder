@@ -70,14 +70,20 @@ def _pill_view_class():
 
 
 class _Hud:
-    """A borderless, click-through panel that joins every Space, including full-screen apps."""
+    """A borderless, click-through panel that joins every Space, including full-screen apps.
 
-    WIDTH = 190.0
+    One window, reused: a notice can replace whatever is on screen but can never pile a
+    second panel on top of it - which is exactly what modal alerts used to do.
+    """
+
+    WIDTH = 190.0          # the minimum; the panel grows to fit longer text
     HEIGHT = 64.0
+    PADDING = 28.0
 
     def __init__(self) -> None:
         self._window = None
         self._hide_timer = None
+        self._width = self.WIDTH
 
     def _build(self):
         from AppKit import (
@@ -148,6 +154,22 @@ class _Hud:
         data = rep.representationUsingType_properties_(NSBitmapImageFileTypePNG, None)
         data.writeToFile_atomically_(path, True)
 
+    def _resize_for(self, text: str) -> None:
+        """Grow the pill to fit the text: a notice is longer than the word 'Blink'."""
+        from AppKit import NSFontAttributeName
+        from Foundation import NSAttributedString, NSMakeRect
+
+        attrs = {NSFontAttributeName: self._label.font()}
+        measured = NSAttributedString.alloc().initWithString_attributes_(text, attrs).size()
+        self._width = max(self.WIDTH, float(measured.width) + 2 * self.PADDING)
+
+        frame = self._window.frame()
+        self._window.setFrame_display_(
+            NSMakeRect(frame.origin.x, frame.origin.y, self._width, self.HEIGHT), False
+        )
+        self._window.contentView().setFrame_(NSMakeRect(0, 0, self._width, self.HEIGHT))
+        self._label.setFrame_(NSMakeRect(0, 17, self._width, 30))
+
     def _place(self, position: str) -> None:
         from AppKit import NSEvent, NSScreen
 
@@ -168,7 +190,7 @@ class _Hud:
 
         frame = screen.frame()
         visible = screen.visibleFrame()
-        x = frame.origin.x + (frame.size.width - self.WIDTH) / 2.0
+        x = frame.origin.x + (frame.size.width - self._width) / 2.0
         if position == "bottom":
             y = visible.origin.y + 90.0
         elif position == "center":
@@ -184,6 +206,7 @@ class _Hud:
 
         window = self._window or self._build()
         self._label.setStringValue_(text)
+        self._resize_for(text)
         self._place(position)
 
         if self._hide_timer is not None:
@@ -233,11 +256,23 @@ class Alerts:
         if self.config.sound_enabled:
             _play_sound(self.config.sound_name, self.config.sound_volume)
 
-    def show_hint(self, text: str | None = None) -> None:
+    def notice(self, text: str, seconds: float = 4.5) -> None:
+        """Say something the person did not ask for, without a window to dismiss.
+
+        These used to be modal alerts. Unattended, they stacked up - come back from lunch
+        and three dialogs are waiting - and each one froze the menu until it was clicked.
+        """
+        self.show_hint(text, duration=seconds, force=True)
+
+    def show_hint(
+        self, text: str | None = None, duration: float | None = None, force: bool = False
+    ) -> None:
         if self._hud is None:
             return
+        if not force and not self.config.hud_enabled:
+            return
         message = text or f"👁  {t('hud_text')}"
-        duration = self.config.hud_duration
+        duration = self.config.hud_duration if duration is None else duration
         position = self.config.hud_position
 
         def run() -> None:

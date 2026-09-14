@@ -43,6 +43,41 @@ def pause_path() -> Path:
 def lock_path() -> Path:
     return _path("running.lock")
 
+
+def notices_path() -> Path:
+    return _path("notices.json")
+
+
+# --- unsolicited notices ------------------------------------------------
+# "At most once an hour" has to be remembered on disk. Kept in memory it resets on every
+# restart - a crash, an update, a login - and the person comes back to a pile of them.
+
+
+def notice_due(kind: str, every: float = 3600.0) -> bool:
+    try:
+        seen = json.loads(notices_path().read_text(encoding="utf-8"))
+        last = float(seen.get(kind, 0.0))
+    except (OSError, ValueError, TypeError):
+        return True
+    return time.time() - last > every
+
+
+def notice_shown(kind: str) -> None:
+    try:
+        seen = json.loads(notices_path().read_text(encoding="utf-8"))
+        if not isinstance(seen, dict):
+            seen = {}
+    except (OSError, ValueError):
+        seen = {}
+    seen[kind] = time.time()
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = notices_path().with_suffix(".tmp")
+        tmp.write_text(json.dumps(seen), encoding="utf-8")
+        os.replace(tmp, notices_path())
+    except OSError as exc:
+        log.debug("could not remember the notice: %s", exc)
+
 VALID_COMMANDS = ("quit", "pause", "resume", "toggle", "reload")
 
 
