@@ -1,0 +1,34 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # MediaPipe, the Quartz bindings and the AVFoundation checks all want a real Mac.
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Detector
+        run: python tests/test_detector.py
+
+      - name: Settings
+        run: python tests/test_config.py
+
+      - name: Terminal control
+        run: python tests/test_control.py
+
+      # tests/test_menubar.py builds the real menu bar app and needs a logged-in GUI
+      # session, which hosted runners do not reliably provide - run it locally.

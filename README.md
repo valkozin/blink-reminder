@@ -1,15 +1,39 @@
-# Blink Reminder 👁️
+<p align="center">
+  <img src="docs/social-preview.png" width="720"
+       alt="Blink Reminder: your Mac notices when you stop blinking, and quietly tells you">
+</p>
 
-A quiet macOS menu bar app that watches your blink rate through the webcam and nudges you
-when you forget to blink. Built for people who sit in front of a screen all day: it runs in
-the background, reminds you over *any* app — including full-screen ones — and gets out of the
-way when you step away from the desk.
+<p align="center">
+  <a href="https://github.com/valkozin/blink-reminder/actions/workflows/tests.yml"><img src="https://github.com/valkozin/blink-reminder/actions/workflows/tests.yml/badge.svg" alt="tests"></a>
+  <img src="https://img.shields.io/badge/macOS-menu%20bar-lightgrey?logo=apple" alt="macOS menu bar app">
+  <img src="https://img.shields.io/badge/python-3.9%E2%80%933.12-blue?logo=python&logoColor=white" alt="Python 3.9–3.12">
+  <img src="https://img.shields.io/badge/network%20access-none-brightgreen" alt="no network access">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license"></a>
+</p>
 
-Everything happens locally. The app opens no network connections at all — the landmark models
+# Blink Reminder
+
+When you concentrate on a screen you blink far less than usual, and by evening your eyes are
+dry and tired. **Blink Reminder watches your blink rate through the webcam and, when you really
+have stopped blinking, plays a soft sound and shows a small hint over whatever you are doing.**
+It lives in the menu bar, keeps out of the way when you step away, and never sends a single
+frame anywhere.
+
+<p align="center"><img src="docs/hud.png" width="190" alt="The on-screen hint"></p>
+
+```bash
+git clone https://github.com/valkozin/blink-reminder.git && cd blink-reminder && ./install.sh
+```
+
+**Not another 20-20-20 timer.** A timer nags you on schedule whether you need it or not. This
+counts actual blinks, measured against your own eyes, and stays silent while you are blinking
+normally. When it cannot measure — you turned away, the camera cannot see your eyelids — it
+says so and stops, instead of guessing.
+
+**Private by construction.** The app opens no network connections at all: the landmark models
 ship inside the Python package, camera frames never touch the disk, and the only files written
-are your settings and a per-day count of blinks in
-`~/Library/Application Support/BlinkReminder/`. It needs the internet exactly once, during
-`./install.sh`, to download its libraries.
+are your settings and a per-day count of blinks in `~/Library/Application Support/BlinkReminder/`.
+It needs the internet exactly once, during `./install.sh`, to download its libraries.
 
 ## What it does
 
@@ -229,15 +253,23 @@ python@3.12`) or let `install.sh` use uv, which downloads a matching interpreter
 
 ```bash
 VENV=~/.local/share/blink-reminder/venv          # created by ./install.sh
-$VENV/bin/python tests/test_detector.py          # camera and MediaPipe are stubbed out
+for suite in detector config control menubar; do $VENV/bin/python tests/test_$suite.py; done
 $VENV/bin/python -m blinkreminder --verbose      # run straight from this checkout
 ```
 
 Re-run `./install.sh` to push local changes into the installed copy.
 
+The tests stub out the camera, MediaPipe and the machine itself — screen lock, display sleep and
+keyboard idle time are all faked, and every file the app would write goes to a throwaway
+folder — so they give the same answer on a laptop with the lid shut as on a CI runner, and never
+touch a running copy of the app. GitHub Actions runs the detector, settings and control suites
+on every push; `test_menubar.py` builds the real menu bar app and needs a logged-in GUI session,
+so run that one locally.
+
 `blinkreminder/` holds the app: `detector.py` (camera loop and blink logic), `alerts.py` (sound
-and the floating hint), `preview.py` (the framing window), `menubar.py` (the UI), `autostart.py`
-(launchd agent), `config.py`, `stats.py`, `system.py`, `i18n.py`.
+and the floating hint), `preview.py` (the framing window), `menubar.py` (the UI), `control.py`
+(the terminal commands), `autostart.py` (launchd agent), `config.py`, `stats.py`, `system.py`,
+`i18n.py`.
 
 To see what the detector actually sees, record a trace and analyse it:
 
