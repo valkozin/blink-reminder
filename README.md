@@ -19,7 +19,10 @@ have stopped blinking, plays a soft sound and shows a small hint over whatever y
 It lives in the menu bar, keeps out of the way when you step away, and never sends a single
 frame anywhere.
 
-<p align="center"><img src="docs/hud.png" width="190" alt="The on-screen hint"></p>
+<p align="center">
+  <img src="docs/demo.gif" width="800"
+       alt="The hint appears over the desktop, fades, and the counter in the menu bar ticks up as the blink registers">
+</p>
 
 ```bash
 git clone https://github.com/valkozin/blink-reminder.git && cd blink-reminder && ./install.sh
