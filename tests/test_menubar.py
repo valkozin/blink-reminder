@@ -15,7 +15,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import numpy as np
 
 from test_detector import FRAME, _FakeFaceMesh
 
@@ -242,6 +241,31 @@ def test_the_timing_line_explains_every_state():
         app._tick()
         assert app.timing_item.title == "Not counting right now"
         app.on_toggle_pause()
+    finally:
+        app.detector.stop()
+
+
+def test_the_timing_line_never_counts_when_nothing_can_fire():
+    """Bug: '36 s of 6' with no reminder - the line kept counting while the app was
+    silent for a reason it did not mention."""
+    app, mesh, _ = _app()
+    try:
+        for _ in range(30):
+            time.sleep(0.1)
+            if app.detector.snapshot().state == "active":
+                break
+
+        mesh.ear = None                                   # face lost
+        time.sleep(detector_module.FACE_GRACE + 0.6)
+        app._tick()
+        assert app.timing_item.title.startswith("Face not in view"), app.timing_item.title
+
+        mesh.ear = 0.30                                   # face back, but blinks unmeasurable
+        time.sleep(0.5)
+        app.detector._face_seconds_since_blink = detector_module.SIGNAL_TIMEOUT + 1
+        app._tick()
+        assert app.timing_item.title.startswith("Blinks not measurable"), app.timing_item.title
+        assert "of 6" not in app.timing_item.title
     finally:
         app.detector.stop()
 

@@ -33,6 +33,42 @@ def _play_sound(name: str, volume: float) -> None:
         log.warning("could not play %s: %s", path, exc)
 
 
+_PillView = None
+
+
+def _pill_view_class():
+    """An NSView that paints a dark rounded pill. Built on first use so that importing
+    this module on a machine without AppKit still works.
+
+    A system vibrancy view was tried first and looked wrong: its blur backdrop stays
+    rectangular however the layer is rounded, and in light mode the "HUD" material
+    turns pale grey under white text. A plain painted pill is the same in every
+    appearance and over any wallpaper.
+    """
+    global _PillView
+    if _PillView is None:
+        from AppKit import NSBezierPath, NSColor, NSView
+        from Foundation import NSInsetRect
+
+        class PillView(NSView):
+            def drawRect_(self, _rect):
+                # Half a point in, so the 1 pt stroke sits fully inside the view.
+                path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    NSInsetRect(self.bounds(), 0.5, 0.5), 18.0, 18.0
+                )
+                NSColor.colorWithCalibratedWhite_alpha_(0.10, 0.92).setFill()
+                path.fill()
+                NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.14).setStroke()
+                path.setLineWidth_(1.0)
+                path.stroke()
+
+            def isOpaque(self):
+                return False
+
+        _PillView = PillView
+    return _PillView
+
+
 class _Hud:
     """A borderless, click-through panel that joins every Space, including full-screen apps."""
 
@@ -45,15 +81,12 @@ class _Hud:
 
     def _build(self):
         from AppKit import (
+            NSAppearance,
             NSBackingStoreBuffered,
             NSColor,
             NSFont,
             NSScreenSaverWindowLevel,
             NSTextField,
-            NSVisualEffectBlendingModeBehindWindow,
-            NSVisualEffectMaterialHUDWindow,
-            NSVisualEffectStateActive,
-            NSVisualEffectView,
             NSWindow,
             NSWindowCollectionBehaviorCanJoinAllSpaces,
             NSWindowCollectionBehaviorFullScreenAuxiliary,
@@ -70,23 +103,20 @@ class _Hud:
         window.setBackgroundColor_(NSColor.clearColor())
         window.setLevel_(NSScreenSaverWindowLevel)
         window.setIgnoresMouseEvents_(True)
-        window.setHasShadow_(True)
+        # No system shadow: for a transparent window it is computed from a rectangle,
+        # which is where the "rounded corners plus sharp corners" look came from.
+        window.setHasShadow_(False)
         window.setAlphaValue_(0.0)
+        window.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameDarkAqua"))
         window.setCollectionBehavior_(
             NSWindowCollectionBehaviorCanJoinAllSpaces
             | NSWindowCollectionBehaviorStationary
             | NSWindowCollectionBehaviorFullScreenAuxiliary
         )
 
-        effect = NSVisualEffectView.alloc().initWithFrame_(rect)
-        effect.setMaterial_(NSVisualEffectMaterialHUDWindow)
-        effect.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
-        effect.setState_(NSVisualEffectStateActive)
-        effect.setWantsLayer_(True)
-        effect.layer().setCornerRadius_(16.0)
-        effect.layer().setMasksToBounds_(True)
+        background = _pill_view_class().alloc().initWithFrame_(rect)
 
-        label = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 16, self.WIDTH, 30))
+        label = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 17, self.WIDTH, 30))
         label.setStringValue_("")
         label.setBezeled_(False)
         label.setDrawsBackground_(False)
@@ -96,12 +126,24 @@ class _Hud:
         label.setTextColor_(NSColor.whiteColor())
         label.setFont_(NSFont.systemFontOfSize_weight_(19.0, 0.23))  # semibold
 
-        effect.addSubview_(label)
-        window.setContentView_(effect)
+        background.addSubview_(label)
+        window.setContentView_(background)
 
         self._window = window
         self._label = label
         return window
+
+    def render_png(self, path: str) -> None:
+        """Draw the panel as it will appear, without showing it - for checking the look."""
+        from AppKit import NSBitmapImageFileTypePNG
+
+        window = self._window or self._build()
+        view = window.contentView()
+        bounds = view.bounds()
+        rep = view.bitmapImageRepForCachingDisplayInRect_(bounds)
+        view.cacheDisplayInRect_toBitmapImageRep_(bounds, rep)
+        data = rep.representationUsingType_properties_(NSBitmapImageFileTypePNG, None)
+        data.writeToFile_atomically_(path, True)
 
     def _place(self, position: str) -> None:
         from AppKit import NSEvent, NSScreen

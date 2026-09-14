@@ -473,9 +473,19 @@ class BlinkReminderApp(rumps.App):
         )
 
     def _timing_text(self, snap) -> str:
-        """Why nothing is happening right now - otherwise the gap reads as a failure."""
-        if self.detector.paused or snap.state not in (State.ACTIVE, State.NO_FACE):
+        """Why nothing is happening right now - otherwise the gap reads as a failure.
+
+        Every reason a reminder cannot fire gets its own line, because a countdown that
+        reads "36 s of 6" while the app is silent is worse than no countdown at all.
+        """
+        if self.detector.paused or snap.state not in (State.ACTIVE, State.NO_FACE, State.STARTING):
             return t("timing_idle")
+        if snap.state == State.NO_FACE:
+            return t("timing_no_face")
+        if snap.state == State.STARTING:
+            return t("timing_calibrating")
+        if snap.signal_unusable:
+            return t("timing_unusable")
         if snap.reminder_hold > 0:
             return t("timing_hold", seconds=int(snap.reminder_hold) + 1)
         return t(

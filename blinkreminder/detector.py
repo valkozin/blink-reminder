@@ -133,7 +133,7 @@ class BlinkDetector:
         self._blink_times: deque[float] = deque()
         self._closed_since: Optional[float] = None
         self._eyes_closed = False
-        self._last_blink = time.monotonic()
+        self._since_blink = 0.0  # seconds with your face in view since the last blink/reminder
         self._last_face = time.monotonic()
         self._last_reminder = 0.0
         self._standby_since: Optional[float] = None
@@ -210,13 +210,13 @@ class BlinkDetector:
         # just clicked Pause should not watch the icon carry on as if nothing happened.
         self._state = State.PAUSED
 
-    def resume(self) -> None:
+    def resume(self, now: Optional[float] = None) -> None:
         with self._lock:
             self._paused = False
             self._paused_until = None
         control.clear_pause()
         self._state = State.STARTING
-        self._reset_timers()
+        self._fresh_start(time.monotonic() if now is None else now)
 
     def toggle_pause(self) -> bool:
         if self.paused:
@@ -259,7 +259,7 @@ class BlinkDetector:
             blinks=self._blinks,
             reminders=self._reminders,
             rate=rate,
-            seconds_since_blink=now - self._last_blink,
+            seconds_since_blink=self._since_blink,
             active_seconds=self._active_seconds,
             paused_until=self._paused_until,
             seconds_since_face=since_face,
@@ -344,11 +344,26 @@ class BlinkDetector:
     # ------------------------------------------------------------------ helpers
 
     def _reset_timers(self, now: Optional[float] = None) -> None:
-        now = time.monotonic() if now is None else now
-        self._last_blink = now
+        self._since_blink = 0.0
         self._last_reminder = 0.0
         self._closed_since = None
         self._eyes_closed = False
+
+    def _fresh_start(self, now: float) -> None:
+        """Forget everything about presence: called whenever the camera comes back.
+
+        After a pause the last sighting of a face is as old as the pause itself, so the
+        very first frame back used to read as "away for ages" and drop straight into
+        standby - with the probe backoff, that meant five minutes of doing nothing
+        until something else (the framing preview) forced the camera open.
+        """
+        self._last_face = now
+        self._standby_since = None
+        self._probe_started = None
+        self._failed_probes = 0
+        self._camera_failed_at = None
+        self._face_seconds_since_blink = 0.0
+        self._reset_timers(now)
 
     def _trim_blink_times(self, now: float) -> None:
         while self._blink_times and now - self._blink_times[0] > 60.0:
@@ -399,6 +414,7 @@ class BlinkDetector:
     # ------------------------------------------------------------------ main loop
 
     def _run(self) -> None:
+        was_blocked = False
         while not self._stop.is_set():
             loop_started = time.monotonic()
 
@@ -419,8 +435,13 @@ class BlinkDetector:
                     self._state = blocked
                     self._release_camera()
                     self._reset_timers(loop_started)
+                    was_blocked = True
                     self._stop.wait(1.0)
                     continue
+                if was_blocked:
+                    was_blocked = False
+                    self._fresh_start(loop_started)
+                    self._state = State.STARTING
 
             if not self._preview_wanted and self._state == State.STANDBY:
                 if not self._standby_should_wake(loop_started):
@@ -469,7 +490,9 @@ class BlinkDetector:
         return cv2.resize(frame, (target, height), interpolation=cv2.INTER_AREA)
 
     def _process(self, frame, now: float) -> None:
-        dt = min(now - self._last_tick, 2.0)
+        # A frame interval, never a gap: after standby or a pause the clock has moved
+        # on but no face-time has passed, and the countdown must not jump with it.
+        dt = min(now - self._last_tick, 0.5)
         self._last_tick = now
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -506,7 +529,7 @@ class BlinkDetector:
                 "closed": int(self._eyes_closed),
                 "blinks": self._blinks,
                 "reminders": self._reminders,
-                "since_blink": now - self._last_blink,
+                "since_blink": self._since_blink,
                 "state": self._state,
             }
             if results.multi_face_landmarks:
@@ -516,6 +539,8 @@ class BlinkDetector:
         if face_present:
             self._active_seconds += dt
             self._face_seconds_since_blink += dt
+            if not self._eyes_closed:
+                self._since_blink += dt
             calibrating = len(self._history) < CALIBRATION_SAMPLES
             self._state = State.STARTING if calibrating else State.ACTIVE
             if not calibrating:
@@ -529,10 +554,8 @@ class BlinkDetector:
         if now - self._last_face > ABSENCE_RESET:
             self._reset_timers(now)
             self._face_seconds_since_blink = 0.0
-        else:
-            self._last_blink += dt
-            if self._last_reminder:
-                self._last_reminder += dt
+        # Otherwise nothing to do: the countdown only counts face-time, so a glance
+        # at the keyboard freezes it by construction.
 
         probing = self._probe_started is not None
         away_for = now - self._last_face
@@ -697,14 +720,14 @@ class BlinkDetector:
             self._eyes_closed = True
             self._closed_since = now
             self._closed_min_ear = ear
-            self._last_blink = now  # closed eyes are moist eyes - nothing to remind about
+            self._since_blink = 0.0  # closed eyes are moist eyes - nothing to remind about
         elif self._eyes_closed and ear > threshold * REOPEN_MARGIN:
             duration = now - (self._closed_since or now)
             deepest = self._closed_min_ear if self._closed_min_ear is not None else ear
             self._eyes_closed = False
             self._closed_since = None
             self._closed_min_ear = None
-            self._last_blink = now
+            self._since_blink = 0.0
             self._face_seconds_since_blink = 0.0
             if duration <= MAX_BLINK_SECONDS:
                 self._blinks += 1
@@ -715,19 +738,19 @@ class BlinkDetector:
                     self._last_blink_depth = (baseline - deepest) / baseline
                     self._blink_depths.append(self._last_blink_depth)
         elif self._eyes_closed:
-            self._last_blink = now
+            self._since_blink = 0.0
             if self._closed_min_ear is None or ear < self._closed_min_ear:
                 self._closed_min_ear = ear
 
     def _maybe_remind(self, now: float) -> None:
         if self.signal_unusable:
             return  # we are not measuring anything; a reminder now would be a guess
-        if now - self._last_blink < self.config.interval:
+        if self._since_blink < self.config.interval:
             return
         if now - self._last_reminder < self.config.min_reminder_gap:
             return
         self._last_reminder = now
-        self._last_blink = now
+        self._since_blink = 0.0
         self._reminders += 1
         try:
             self._on_reminder()

@@ -166,6 +166,8 @@ blink-reminder --interval 15 --sound Purr --save
 blink-reminder --install-autostart  # or --uninstall-autostart
 blink-reminder --reset-config
 blink-reminder --diagnose 20         # live detection numbers, to check the camera
+blink-reminder --no-sound --no-hud --camera 1 --save   # one-off overrides; --save keeps them
+blink-reminder --version
 ```
 
 Settings live in `~/Library/Application Support/BlinkReminder/config.json` and hold a few knobs

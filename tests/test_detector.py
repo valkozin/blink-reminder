@@ -96,7 +96,7 @@ def _detector(**overrides):
     mesh = _FakeFaceMesh()
     detector._ensure_face_mesh = lambda: mesh  # type: ignore[method-assign]
     # Tests drive a fake clock that starts at 1000.0; line the detector up with it.
-    detector._last_blink = detector._last_face = detector._last_tick = FAKE_START
+    detector._last_face = detector._last_tick = FAKE_START
     return detector, mesh, reminders, config
 
 
@@ -363,6 +363,49 @@ def test_signal_quality_reflects_how_deep_the_blinks_look():
         now = _feed(detector2, mesh2, 0.15, 0.2, start=now)
         now = _feed(detector2, mesh2, 0.30, 1.0, start=now)
     assert detector2.snapshot().signal_quality == "good"
+
+
+def test_resume_after_a_long_pause_looks_for_you_instead_of_sleeping():
+    """Bug: after a pause the first frame read as 'away for ages' and went to standby."""
+    detector, mesh, _, _ = _detector(absence_timeout=90.0)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)   # seen, then paused for ages
+    detector.pause()
+    now += 600.0
+    detector.resume(now)
+    assert detector._failed_probes == 0 and detector._standby_since is None
+
+    # Camera back, but the person is looking at the other screen for a while.
+    now = _feed(detector, mesh, None, 30.0, start=now)
+    assert detector._state == State.NO_FACE, "must keep looking, not fall asleep"
+    assert detector._standby_since is None
+    now = _feed(detector, mesh, 0.30, 3.0, start=now)
+    assert detector._state == State.ACTIVE
+
+
+def test_countdown_does_not_jump_after_a_gap_in_frames():
+    """Bug: '36 s of 6' - the frozen countdown leapt forward when the camera came back."""
+    detector, mesh, reminders, _ = _detector(interval=10.0)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    now = _feed(detector, mesh, 0.10, 0.2, start=now)          # blink: countdown at zero
+    now = _feed(detector, mesh, 0.30, 4.0, start=now)          # 4 s of face-time
+    now += 60.0                                                # a minute with no frames at all
+    now = _feed(detector, mesh, 0.30, 1.0, start=now)
+    since = detector.snapshot(now).seconds_since_blink
+    assert 4.5 <= since <= 5.6, f"only face-time counts, got {since:.1f}"
+    assert reminders == [], "no reminder just for sitting back down"
+
+
+def test_countdown_only_grows_while_the_face_is_in_view():
+    detector, mesh, _, _ = _detector(interval=10.0)
+    now = _feed(detector, mesh, 0.30, 6.0, start=FAKE_START)
+    now = _feed(detector, mesh, 0.10, 0.2, start=now)
+    now = _feed(detector, mesh, 0.30, 3.0, start=now)
+    now = _feed(detector, mesh, None, 8.0, start=now)          # away, under the reset limit
+    since = detector.snapshot(now).seconds_since_blink
+    # The last sighting is trusted for FACE_GRACE seconds, so up to that much may be
+    # added after the face is lost - but not the eight seconds of absence.
+    import blinkreminder.detector as module
+    assert 3.0 <= since <= 3.0 + module.FACE_GRACE + 0.2, f"got {since:.1f}"
 
 
 def test_pause_and_resume():
