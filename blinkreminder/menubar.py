@@ -49,7 +49,7 @@ class BlinkReminderApp(rumps.App):
         self._flushed_reminders = 0
         self._flushed_active = 0.0
         self._error_shown = False
-        self._unseen_warned_at = 0.0
+
         self._preview = PreviewWindow(t("preview_title"))
         self._preview_timer = None
 
@@ -337,7 +337,8 @@ class BlinkReminderApp(rumps.App):
         self._error_shown = True
 
         def show() -> None:
-            rumps.alert(title=t("camera_error_title"), message=t("camera_error_body"), ok="OK")
+            self.alerts.notice(t("camera_error_notice"), seconds=6.0)
+            log.error("%s", t("camera_error_body"))
 
         from PyObjCTools import AppHelper
 
@@ -346,7 +347,10 @@ class BlinkReminderApp(rumps.App):
     def _camera_denied(self, timer=None) -> None:
         if timer is not None:
             timer.stop()
-        rumps.alert(title=t("camera_error_title"), message=t("camera_denied_body"), ok="OK")
+        # Not a dialog: nobody may be at the desk, and an unattended dialog just waits.
+        # The menu, the icon and `blink-reminder --status` carry the full explanation.
+        self.alerts.notice(t("camera_denied_notice"), seconds=6.0)
+        log.warning("%s", t("camera_denied_body"))
 
     def _tick(self, _=None) -> None:
         self._handle_command()
@@ -357,17 +361,19 @@ class BlinkReminderApp(rumps.App):
         snap = self.detector.snapshot()
         blind = snap.unseen_at_keyboard or snap.signal_unusable
         icon = UNSEEN_ICON if blind else ICONS.get(snap.state, "👁")
-        # The menu bar icon and the status line carry this continuously; the modal
-        # explanation is worth one interruption, not one an hour of them.
-        if blind and time.monotonic() - self._unseen_warned_at > 3600:
-            self._unseen_warned_at = time.monotonic()
-            body = "unusable_body" if snap.signal_unusable else "unseen_body"
-            rumps.alert(title=t("unseen_title"), message=t(body), ok="OK")
+        # A passing note, not a dialog. The icon and the menu say it continuously, and the
+        # limit lives on disk so restarting the app does not start the counting over.
+        if blind and control.notice_due("unseen"):
+            control.notice_shown("unseen")
+            unusable = snap.signal_unusable
+            self.alerts.notice(t("unusable_notice" if unusable else "unseen_notice"), seconds=6.0)
+            log.warning("%s", t("unusable_body" if unusable else "unseen_body"))
         extra = self.config.menubar_extra
         if extra == "count":
             # A number that ticks up the moment you blink - the quickest way to tell
-            # whether the camera is actually seeing you.
-            self.title = f"{icon} {snap.blinks}"
+            # whether the camera is actually seeing you. It rolls over at a hundred so
+            # the menu bar keeps its width; the running total is in the menu itself.
+            self.title = f"{icon} {snap.blinks % 100}"
         elif extra == "rate" and snap.rate is not None and snap.state == State.ACTIVE:
             self.title = f"{icon} {snap.rate:g}"
         else:

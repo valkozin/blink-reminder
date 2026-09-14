@@ -98,7 +98,7 @@ Click the eye in the menu bar:
 | **Show on-screen hint** | The floating hint, on or off |
 | **Detection sensitivity** | Raise it if light blinks are missed, lower it if squinting is counted |
 | **Camera** | Pick a camera, or open **Check camera framing…** to aim it and watch blinks register |
-| **Next to the menu bar icon** | Nothing, the blink rate, or a live blink counter |
+| **Next to the menu bar icon** | Nothing, the blink rate, or a live blink counter (it rolls over at a hundred to keep the menu bar narrow; the running total is in the menu) |
 | **Pause when keyboard is idle** | Off by default — reading without touching the keyboard still counts as screen time |
 | **Pause when screen is locked** | On by default |
 | **Start at login** | Installs/removes the launchd agent |
@@ -106,6 +106,11 @@ Click the eye in the menu bar:
 
 Menu bar icon: 👁 watching · ⏸ paused · 💤 standing by · 🙈 the camera cannot see you, or can
 see you but cannot measure blinks · ⚠️ camera problem.
+
+When the app has something to say on its own — it cannot see you, or cannot see you blink — it
+says it the same way it reminds you: a hint that fades on its own, at most once an hour. Never a
+dialog. Dialogs wait for a click, and the one thing you can be sure of when the camera cannot
+find your face is that nobody is sitting there to click.
 
 **The app stops reminding you when it cannot measure.** Nobody goes two minutes without
 blinking, so if a face is in frame and not one blink is measurable in all that time, the eyelids
