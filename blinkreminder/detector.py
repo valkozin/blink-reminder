@@ -41,6 +41,15 @@ STANDBY_MIN_SLEEP = 20.0        # but never reopen the camera sooner than this
 PROBE_BACKOFF_AFTER = 3         # fruitless probes before backing right off
 PROBE_BACKOFF_SLEEP = 300.0     # ...to one look every five minutes
 UNSEEN_WARNING_AFTER = 180.0    # at the keyboard, unseen this long: say so
+# A camera that is open but delivers nothing. After sleep, or with the lid shut, macOS
+# keeps the capture session "running" - LED on and all - while every frame is black or
+# the same frame forever. That is not "no face"; it is no picture, and the cure is to
+# close the camera and open it again.
+BLACK_FRAME_MEAN = 5.0          # mean pixel value below this is a black frame
+FROZEN_FRAME_DIFF = 0.02        # mean change between frames below this is a frozen one
+DEAD_AFTER = 2.0                # seconds of such frames before the camera is declared dead
+REOPEN_DELAY_MIN = 3.0          # first retry after a dead camera
+REOPEN_DELAY_MAX = 60.0         # and no slower than this
 # Nobody goes two minutes without blinking. If the face is right there and not one
 # blink is measurable in all that time, the camera angle is hiding the eyelids - the
 # signal is unusable and reminders based on it would be invented, so we stop.
@@ -61,6 +70,7 @@ class State:
     LOCKED = "locked"
     IDLE = "idle"
     ERROR = "error"
+    NO_IMAGE = "no_image"       # camera open, frames black or frozen: reopening it
 
 
 @dataclass
@@ -73,6 +83,7 @@ class Snapshot:
     active_seconds: float = 0.0       # time with your face in front of the camera
     paused_until: Optional[float] = None
     seconds_since_face: float = 0.0
+    lid_closed: bool = False          # only meaningful in the NO_IMAGE state
     unseen_at_keyboard: bool = False  # you are typing, but the camera cannot find you
     signal_unusable: bool = False     # your face is visible but blinks are not measurable
     signal_quality: str = "unknown"    # good | weak | unknown - how clearly blinks show up
@@ -140,6 +151,11 @@ class BlinkDetector:
         self._probe_started: Optional[float] = None
         self._failed_probes = 0
         self._camera_failed_at: Optional[float] = None
+        self._reopen_delay = REOPEN_DELAY_MIN
+        self._bad_frames_since: Optional[float] = None
+        self._previous_gray = None
+        self._wake_requested = False
+        self._lid_closed = False
         self._error_reported = False
         self._reopen_requested = False
 
@@ -238,6 +254,14 @@ class BlinkDetector:
         """Drop the capture so the next loop picks up a new camera index."""
         self._reopen_requested = True
 
+    def wake(self) -> None:
+        """The machine slept, or its displays changed: start over with a fresh camera.
+
+        Called from the workspace notifications rather than inferred from symptoms - the
+        capture session that survives a sleep looks alive from the outside.
+        """
+        self._wake_requested = True
+
     def snapshot(self, now: Optional[float] = None) -> Snapshot:
         """`now` is only passed by tests, which drive their own clock."""
         now = time.monotonic() if now is None else now
@@ -263,6 +287,7 @@ class BlinkDetector:
             active_seconds=self._active_seconds,
             paused_until=self._paused_until,
             seconds_since_face=since_face,
+            lid_closed=self._lid_closed,
             signal_unusable=self.signal_unusable,
             signal_quality=self.signal_quality,
             reminder_hold=hold,
@@ -418,6 +443,15 @@ class BlinkDetector:
         while not self._stop.is_set():
             loop_started = time.monotonic()
 
+            if self._wake_requested:
+                self._wake_requested = False
+                log.info("woke up: reopening the camera")
+                self._release_camera()
+                self._fresh_start(loop_started)
+                self._forget_bad_frames()
+                if self._state not in (State.PAUSED,):
+                    self._state = State.STARTING
+
             if self._reopen_requested:
                 self._reopen_requested = False
                 self._release_camera()
@@ -453,7 +487,7 @@ class BlinkDetector:
                 self._reset_timers(loop_started)
 
             if self._cap is None and self._camera_failed_at is not None:
-                if loop_started - self._camera_failed_at < 15.0:
+                if loop_started - self._camera_failed_at < self._reopen_delay:
                     self._stop.wait(1.0)
                     continue
                 self._camera_failed_at = None
@@ -471,7 +505,10 @@ class BlinkDetector:
                 self._stop.wait(1.0)
                 continue
 
-            self._process(self._downscale(frame), loop_started)
+            small = self._downscale(frame)
+            if not self._frame_is_usable(small, loop_started):
+                continue
+            self._process(small, loop_started)
 
             frame_budget = 1.0 / max(self.config.fps, 1)  # re-read: fps is user-settable
             elapsed = time.monotonic() - loop_started
@@ -479,6 +516,73 @@ class BlinkDetector:
                 self._stop.wait(frame_budget - elapsed)
 
         self._release_camera()
+
+    def _forget_bad_frames(self) -> None:
+        self._bad_frames_since = None
+        self._previous_gray = None
+        self._reopen_delay = REOPEN_DELAY_MIN
+
+    def _frame_is_usable(self, frame, now: float) -> bool:
+        """Black or frozen frames are a dead capture session, not an empty chair.
+
+        Returns False (and takes over the loop) while the camera is being brought back.
+        """
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        black = float(gray.mean()) < BLACK_FRAME_MEAN
+        frozen = (
+            self._previous_gray is not None
+            and self._previous_gray.shape == gray.shape
+            and float(cv2.absdiff(gray, self._previous_gray).mean()) < FROZEN_FRAME_DIFF
+        )
+        self._previous_gray = gray
+
+        if not (black or frozen):
+            if self._bad_frames_since is not None or self._state == State.NO_IMAGE:
+                # Picture is back. Presence starts from scratch: nothing seen while it was
+                # dark should count as the person having left. A camera also warms up with
+                # a couple of black frames on every open - that is not worth a log line.
+                if self._state == State.NO_IMAGE:
+                    log.info("camera is delivering frames again")
+                self._forget_bad_frames()
+                self._fresh_start(now)
+                self._state = State.STARTING
+            return True
+
+        if self._bad_frames_since is None:
+            self._bad_frames_since = now
+        if self._preview_wanted:
+            self._render_no_image(frame, now)
+        if now - self._bad_frames_since < DEAD_AFTER:
+            return False
+
+        # Dead. Close it, wait a little, try again - and a little longer each time.
+        reason = "black" if black else "frozen"
+        self._lid_closed = system.lid_is_closed()
+        log.warning("camera gives %s frames for %.0fs - reopening in %.0fs%s",
+                    reason, now - self._bad_frames_since, self._reopen_delay,
+                    " (lid is closed)" if self._lid_closed else "")
+        self._state = State.NO_IMAGE
+        self._release_camera()
+        self._camera_failed_at = now
+        self._bad_frames_since = None
+        self._previous_gray = None
+        self._reopen_delay = min(self._reopen_delay * 2, REOPEN_DELAY_MAX)
+        return False
+
+    def _render_no_image(self, frame, now: float) -> None:
+        try:
+            view = frame.copy()
+            height, width = view.shape[:2]
+            cv2.rectangle(view, (0, 0), (width - 1, height - 1), (0, 0, 230), 3)
+            cv2.putText(view, "NO IMAGE FROM CAMERA", (12, 28),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 230), 2)
+            cv2.putText(view, "reopening it...", (12, 56),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            ok, buffer = cv2.imencode(".jpg", view, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            if ok:
+                self._preview_jpeg = buffer.tobytes()
+        except Exception:  # pragma: no cover
+            log.debug("preview rendering failed", exc_info=True)
 
     def _downscale(self, frame):
         """Shrink the captured frame to the size the landmark model actually wants."""

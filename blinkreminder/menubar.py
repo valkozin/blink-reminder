@@ -25,6 +25,7 @@ ICONS = {
     State.LOCKED: "⏸",
     State.IDLE: "⏸",
     State.ERROR: "⚠️",
+    State.NO_IMAGE: "⚠️",
 }
 
 SENSITIVITY_LEVELS = (("sensitivity_low", 0.74), ("sensitivity_normal", 0.82), ("sensitivity_high", 0.88))
@@ -54,6 +55,9 @@ class BlinkReminderApp(rumps.App):
         self._preview_timer = None
 
         self._build_menu()
+        # Sleep, lid, monitors: the camera session that survives any of these looks
+        # alive and delivers nothing. Start over on every such event.
+        system.on_wake(self.detector.wake)
         if camera_granted:
             self.detector.start()
         else:
@@ -505,6 +509,8 @@ class BlinkReminderApp(rumps.App):
             return t("state_unusable")
         if snap.unseen_at_keyboard:
             return t("state_unseen")
+        if snap.state == State.NO_IMAGE:
+            return t("state_no_image_lid" if snap.lid_closed else "state_no_image")
         if snap.state == State.PAUSED and snap.paused_until:
             return t("snooze_until", time=time.strftime("%H:%M", time.localtime(snap.paused_until)))
         return t(f"state_{snap.state}")

@@ -108,7 +108,8 @@ Click the eye in the menu bar:
 | **Today’s statistics…** | Screen time, blinks, average rate, reminders |
 
 Menu bar icon: 👁 watching · ⏸ paused · 💤 standing by · 🙈 the camera cannot see you, or can
-see you but cannot measure blinks · ⚠️ camera problem.
+see you but cannot measure blinks · ⚠️ camera problem, including a camera that is open but
+delivers no picture (after sleep, or with the lid closed) — it is being reopened.
 
 When the app has something to say on its own — it cannot see you, or cannot see you blink — it
 says it the same way it reminds you: a hint that fades on its own, at most once an hour. Never a
@@ -237,6 +238,15 @@ eyes) but are not counted. If no face is visible the countdown is suspended, so 
 reminded to blink at an empty chair.
 
 ## Troubleshooting
+
+**⚠️ after the Mac wakes up, or after closing and opening the lid.** macOS keeps a camera
+session "running" through sleep — LED on and all — while every frame it delivers is black, or
+the same frame forever. The app tells the two apart: black or frozen frames for two seconds are
+a dead camera, not an empty chair, so it closes the camera and reopens it (waiting a little
+longer after each fruitless try, up to a minute), and it also starts over on the system's own
+wake and display-change notifications. With the lid shut the built-in camera faces the
+keyboard, and the menu says so. If the picture does not come back at all, another app has
+probably taken the camera.
 
 **🙈 in the menu bar, or nothing is ever detected.** The camera is not looking at your face —
 see *Point the camera at your face* above. If the picture itself is missing, another app may be

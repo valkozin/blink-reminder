@@ -119,3 +119,57 @@ def list_cameras() -> list[str]:
     except Exception:  # pragma: no cover - defensive
         log.debug("could not list cameras", exc_info=True)
         return []
+
+
+def lid_is_closed() -> bool:
+    """True when a laptop's lid is shut (its built-in camera is then facing the keyboard)."""
+    if not IS_MAC:
+        return False
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["/usr/sbin/ioreg", "-r", "-k", "AppleClamshellState", "-d", "4"],
+            capture_output=True, text=True, timeout=3, check=False,
+        ).stdout
+    except Exception:  # pragma: no cover - defensive
+        return False
+    return '"AppleClamshellState" = Yes' in out
+
+
+def on_wake(callback) -> None:
+    """Call `callback()` whenever the machine wakes, the screens wake, the session becomes
+    active again, or the set of displays changes (a lid opening or closing with an external
+    monitor attached counts). Must be called on the main thread, with a run loop."""
+    if not IS_MAC:
+        return
+    try:
+        from AppKit import NSWorkspace
+    except ImportError:  # pragma: no cover
+        return
+
+    names = [
+        "NSWorkspaceDidWakeNotification",
+        "NSWorkspaceScreensDidWakeNotification",
+        "NSWorkspaceSessionDidBecomeActiveNotification",
+    ]
+
+    def fire(_notification) -> None:  # a block must return None, never a value
+        try:
+            callback()
+        except Exception:  # pragma: no cover
+            log.exception("wake handler failed")
+
+    center = NSWorkspace.sharedWorkspace().notificationCenter()
+    for name in names:
+        center.addObserverForName_object_queue_usingBlock_(name, None, None, fire)
+
+    # Display changes come from NSApplication, not the workspace.
+    try:
+        from Foundation import NSNotificationCenter
+
+        NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+            "NSApplicationDidChangeScreenParametersNotification", None, None, fire
+        )
+    except Exception:  # pragma: no cover
+        log.debug("could not observe display changes", exc_info=True)

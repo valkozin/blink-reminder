@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
-from test_detector import FRAME, _FakeFaceMesh
+from test_detector import _FakeFaceMesh, live_frame
 
 import blinkreminder.config as config_module
 import blinkreminder.control as control_module
@@ -62,7 +62,7 @@ class _FakeCapture:
         return True
 
     def read(self):
-        return True, FRAME
+        return True, live_frame()
 
     def release(self):
         _FakeCapture.released += 1
@@ -352,6 +352,22 @@ def test_being_unseen_shows_a_passing_notice_not_a_dialog():
             assert len(notices) == 1, "the hour is remembered on disk, not in memory"
         finally:
             second.detector.stop()
+    finally:
+        app.detector.stop()
+
+
+def test_a_wake_notification_reaches_the_detector():
+    """The subscription is the fix for cameras that die in the laptop's sleep; make sure the
+    notification actually lands on the detector rather than trusting the registration."""
+    from AppKit import NSWorkspace
+
+    app, _, _ = _app()
+    try:
+        assert app.detector._wake_requested is False
+        NSWorkspace.sharedWorkspace().notificationCenter().postNotificationName_object_(
+            "NSWorkspaceDidWakeNotification", None
+        )
+        assert app.detector._wake_requested is True or app.detector._state == "starting"
     finally:
         app.detector.stop()
 

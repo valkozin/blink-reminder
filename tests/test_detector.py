@@ -28,7 +28,17 @@ system_module.screen_is_locked = lambda: False
 system_module.display_is_asleep = lambda: False
 system_module.idle_seconds = lambda: 0.0
 
-FRAME = np.zeros((480, 480, 3), dtype=np.uint8)  # square, so the EAR aspect fix is a no-op
+FRAME = np.full((480, 480, 3), 90, dtype=np.uint8)  # square, so the EAR aspect fix is a no-op
+_RNG = np.random.default_rng(7)
+
+
+def live_frame():
+    """A frame the way a real camera delivers one: lit, and never quite the same twice.
+
+    A pure black or perfectly repeated frame is what a dead capture session looks like,
+    and the detector now treats it as one - so a fake camera must add sensor noise."""
+    noise = _RNG.integers(0, 6, FRAME.shape, dtype=np.uint8)
+    return FRAME + noise
 FAKE_START = 1000.0
 
 
@@ -97,6 +107,9 @@ def _detector(**overrides):
     config.clamp()
 
     reminders: list[float] = []
+    # A pause is remembered on disk on purpose; a test that paused must not leak that
+    # into the next one, which would then never open its camera at all.
+    control_module.clear_pause()
     detector = BlinkDetector(config, on_reminder=lambda: reminders.append(time.monotonic()))
     mesh = _FakeFaceMesh()
     detector._ensure_face_mesh = lambda: mesh  # type: ignore[method-assign]
@@ -493,7 +506,7 @@ def test_a_locked_screen_stops_watching_and_frees_the_camera():
             return True
 
         def read(self):
-            return True, FRAME
+            return True, live_frame()
 
         def release(self):
             counts["released"] += 1
@@ -521,6 +534,133 @@ def test_a_locked_screen_stops_watching_and_frees_the_camera():
         module.cv2.VideoCapture = original
 
 
+class _ScriptedCapture:
+    """A fake camera whose frames follow a script - black, frozen, or live."""
+
+    mode = "live"
+    opened = 0
+    released = 0
+
+    def __init__(self, *_args):
+        _ScriptedCapture.opened += 1
+        self._open = True
+        self._frozen = live_frame()
+
+    def isOpened(self):
+        return self._open
+
+    def set(self, *_args):
+        return True
+
+    def read(self):
+        mode = _ScriptedCapture.mode
+        if mode == "black":
+            return True, np.zeros(FRAME.shape, dtype=np.uint8)
+        if mode == "frozen":
+            return True, self._frozen
+        return True, live_frame()
+
+    def release(self):
+        _ScriptedCapture.released += 1
+        self._open = False
+
+
+def _run_with_scripted_camera(body):
+    import blinkreminder.detector as module
+
+    original = module.cv2.VideoCapture
+    module.cv2.VideoCapture = _ScriptedCapture
+    _ScriptedCapture.mode, _ScriptedCapture.opened, _ScriptedCapture.released = "live", 0, 0
+    detector, mesh, reminders, _ = _detector()
+    try:
+        detector.start()
+        body(detector, mesh, reminders)
+    finally:
+        detector.stop()
+        module.cv2.VideoCapture = original
+
+
+def test_black_frames_mean_a_dead_camera_not_an_empty_chair():
+    """Bug: after sleep or with the lid shut the camera stays 'open', LED and all, and
+    delivers black frames. Those read as 'no face', the app went to standby, and the
+    icon turned to the monkey - while the fix was simply to reopen the camera."""
+    import blinkreminder.detector as module
+
+    def body(detector, mesh, _):
+        time.sleep(1.0)
+        assert _ScriptedCapture.opened == 1
+
+        _ScriptedCapture.mode = "black"
+        time.sleep(module.DEAD_AFTER + 1.5)
+        snap = detector.snapshot()
+        assert snap.state == State.NO_IMAGE, snap.state
+        assert _ScriptedCapture.released >= 1, "a dead camera must be closed"
+        assert detector._standby_since is None, "and this is not the person leaving"
+
+        _ScriptedCapture.mode = "live"
+        time.sleep(module.REOPEN_DELAY_MIN + 2.5)
+        assert _ScriptedCapture.opened >= 2, "it must be reopened"
+        assert detector.snapshot().state in (State.STARTING, State.ACTIVE, State.NO_FACE)
+        assert detector._reopen_delay == module.REOPEN_DELAY_MIN, "back-off resets once frames are back"
+
+    _run_with_scripted_camera(body)
+
+
+def test_frozen_frames_are_a_dead_camera_too():
+    import blinkreminder.detector as module
+
+    def body(detector, mesh, _):
+        time.sleep(1.0)
+        _ScriptedCapture.mode = "frozen"
+        time.sleep(module.DEAD_AFTER + 1.5)
+        assert detector.snapshot().state == State.NO_IMAGE
+
+    _run_with_scripted_camera(body)
+
+
+def test_a_dead_camera_backs_off_but_never_gives_up():
+    import blinkreminder.detector as module
+
+    def body(detector, mesh, _):
+        time.sleep(1.0)
+        _ScriptedCapture.mode = "black"
+        time.sleep(module.DEAD_AFTER + 1.5)
+        first = detector._reopen_delay
+        assert first == module.REOPEN_DELAY_MIN * 2
+        time.sleep(module.REOPEN_DELAY_MIN + module.DEAD_AFTER + 3.0)  # one full retry, still black
+        assert detector._reopen_delay > first, "each fruitless retry waits longer"
+        assert detector._reopen_delay <= module.REOPEN_DELAY_MAX
+
+    _run_with_scripted_camera(body)
+
+
+def test_waking_up_reopens_the_camera_and_starts_fresh():
+    def body(detector, mesh, _):
+        time.sleep(1.0)
+        before = _ScriptedCapture.opened
+        detector._standby_since = 123.0          # pretend it had dozed off earlier
+        detector._failed_probes = 3
+        detector.wake()
+        time.sleep(1.5)
+        assert _ScriptedCapture.released >= 1 and _ScriptedCapture.opened > before
+        assert detector._standby_since is None and detector._failed_probes == 0
+
+    _run_with_scripted_camera(body)
+
+
+def test_a_pause_survives_waking_up():
+    def body(detector, mesh, _):
+        detector.pause()
+        time.sleep(1.2)
+        detector.wake()
+        time.sleep(1.2)
+        assert detector.paused is True, "sleeping does not cancel a pause the person asked for"
+        assert detector.snapshot().state == State.PAUSED
+        detector.resume()
+
+    _run_with_scripted_camera(body)
+
+
 def test_thread_releases_the_camera_while_paused():
     """The loop must close the camera when paused, so the green light goes off."""
     detector, mesh, _, _ = _detector()
@@ -538,7 +678,7 @@ def test_thread_releases_the_camera_while_paused():
             return True
 
         def read(self):
-            return True, FRAME
+            return True, live_frame()
 
         def release(self):
             opened["released"] += 1
