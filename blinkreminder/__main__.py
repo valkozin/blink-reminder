@@ -31,7 +31,12 @@ log = logging.getLogger("blinkreminder")
 
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    # Under launchd, stderr is already redirected into the log file (see autostart.py), so
+    # a stream handler as well would write every line twice. Echo to stderr only when a
+    # person is watching it in a terminal.
+    handlers: list[logging.Handler] = []
+    if sys.stderr.isatty():
+        handlers.append(logging.StreamHandler(sys.stderr))
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         handlers.append(
