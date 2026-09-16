@@ -6,6 +6,7 @@ set -euo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_HOME="${BLINK_HOME:-$HOME/.local/share/blink-reminder}"
 VENV="$APP_HOME/venv"
+BIN_DIR="${BLINK_BIN:-$HOME/.local/bin}"
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 
@@ -45,6 +46,28 @@ fi
 
 "$VENV/bin/blink-reminder" --version
 
+# Put the command on PATH the way uv and pipx do: a link in ~/.local/bin. Without it the
+# terminal controls (--quit, --pause, --status) only work by their full path, and the one
+# moment you need them - the menu bar icon is out of reach - is when you remember that least.
+link_command() {
+    local target="$BIN_DIR/blink-reminder"
+    mkdir -p "$BIN_DIR"
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+        echo "Not linking: $target exists and is not ours. Use $VENV/bin/blink-reminder." >&2
+        return 0
+    fi
+    ln -sfn "$VENV/bin/blink-reminder" "$target"
+    case ":$PATH:" in
+        *":$BIN_DIR:"*)
+            say "Linked the command: blink-reminder --help" ;;
+        *)
+            say "Linked $target"
+            echo "  $BIN_DIR is not on your PATH yet. Add this line to ~/.zshrc and open a new terminal:"
+            echo "      export PATH=\"$BIN_DIR:\$PATH\"" ;;
+    esac
+}
+link_command
+
 start_as_login_item() {
     say "Registering the login item and starting the app"
     "$VENV/bin/blink-reminder" --install-autostart
@@ -56,6 +79,10 @@ app runs in at every login, so this one answer covers it for good.)
 
 An eye appears in the menu bar. Everything is configured from there; use Quit in
 that menu to stop it, and run ./uninstall.sh to remove it entirely.
+
+From a terminal, whether or not the icon is in sight:
+    blink-reminder --status     blink-reminder --pause 30
+    blink-reminder --quit       blink-reminder --start
 EOF
 }
 
@@ -64,7 +91,7 @@ manual_instructions() {
 
 Done. To start it:
 
-    $VENV/bin/blink-reminder
+    blink-reminder --start
 
 An eye appears in the menu bar; allow camera access when macOS asks. Turn on
 "Start at login" in that menu when you are happy with it.

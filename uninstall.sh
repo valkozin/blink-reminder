@@ -14,6 +14,13 @@ else
 fi
 
 pkill -f "blinkreminder" 2>/dev/null || true
+
+# The command link, but only if it is ours - never someone else's blink-reminder.
+LINK="${BLINK_BIN:-$HOME/.local/bin}/blink-reminder"
+if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$VENV/bin/blink-reminder" ]; then
+    rm -f "$LINK"
+fi
+
 rm -rf "$APP_HOME"
 echo "Removed $APP_HOME and the login item."
 

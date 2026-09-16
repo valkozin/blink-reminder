@@ -192,6 +192,11 @@ to make it as narrow as possible.
 
 ### Command line
 
+`install.sh` links the command into `~/.local/bin`, next to tools like `uv` and `pipx`, so it
+works in any terminal. If that folder is not on your `PATH`, the installer says so and prints
+the line to add. On an install from before the link existed, re-run `./install.sh`, or use the
+full path `~/.local/share/blink-reminder/venv/bin/blink-reminder`.
+
 ```bash
 blink-reminder                      # menu bar app
 blink-reminder --headless           # terminal only, no menu bar
