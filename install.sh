@@ -46,6 +46,41 @@ fi
 
 "$VENV/bin/blink-reminder" --version
 
+# The login item runs through a tiny app bundle, so the camera permission is granted to
+# Blink Reminder rather than to a Python interpreter anything else can run (see
+# macos/launcher.c). autostart.py falls back to plain Python when the bundle is missing.
+APP="$APP_HOME/Blink Reminder.app"
+build_app() {
+    rm -rf "$APP"
+    # set -e is off inside a function called from `if`, hence the explicit returns.
+    mkdir -p "$APP/Contents/MacOS" || return 1
+    clang -O2 -DPYTHON="\"$VENV/bin/python3\"" -o "$APP/Contents/MacOS/blink-reminder" \
+        "$SRC/macos/launcher.c" || return 1
+    cat > "$APP/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>com.valkozin.blinkreminder</string>
+    <key>CFBundleName</key><string>Blink Reminder</string>
+    <key>CFBundleExecutable</key><string>blink-reminder</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>LSUIElement</key><true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Blink Reminder counts your blinks. Frames never leave this Mac.</string>
+</dict>
+</plist>
+EOF
+    codesign --force --sign - "$APP"
+}
+if xcode-select -p >/dev/null 2>&1 && build_app; then
+    say "Built $APP"
+else
+    rm -rf "$APP"
+    echo "Could not build the app bundle (install the tools with: xcode-select --install)." >&2
+    echo "Falling back to plain Python: the camera permission will belong to the interpreter." >&2
+fi
+
 # Put the command on PATH the way uv and pipx do: a link in ~/.local/bin. Without it the
 # terminal controls (--quit, --pause, --status) only work by their full path, and the one
 # moment you need them - the menu bar icon is out of reach - is when you remember that least.

@@ -16,6 +16,8 @@ log = logging.getLogger(__name__)
 AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 PLIST_PATH = AGENTS_DIR / f"{BUNDLE_ID}.plist"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# Built by install.sh next to the venv; see macos/launcher.c for why it exists.
+APP_EXECUTABLE = Path(sys.prefix).parent / "Blink Reminder.app" / "Contents" / "MacOS" / "blink-reminder"
 
 
 def is_supported() -> bool:
@@ -34,7 +36,10 @@ def _running_from_source() -> bool:
 def _plist() -> dict:
     plist = {
         "Label": BUNDLE_ID,
-        "ProgramArguments": [sys.executable, "-m", "blinkreminder"],
+        "ProgramArguments": (
+            [str(APP_EXECUTABLE)] if APP_EXECUTABLE.exists()
+            else [sys.executable, "-m", "blinkreminder"]
+        ),
         "RunAtLoad": True,
         # Restart if it ever crashes, but respect a deliberate Quit.
         "KeepAlive": {"SuccessfulExit": False},

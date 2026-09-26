@@ -265,8 +265,9 @@ seconds to confirm the detection works, then set it back.
 make sure your face is reasonably lit and inside the frame.
 
 **⚠️ in the menu bar after login.** The camera permission was denied for the background agent.
-Open System Settings › Privacy & Security › Camera and allow the `python` entry belonging to
-`~/.local/share/blink-reminder/venv`, then restart the app:
+Open System Settings › Privacy & Security › Camera and allow **Blink Reminder** (a `python`
+entry instead means the app bundle could not be built — run `xcode-select --install`, then
+`./install.sh` again), then restart the app:
 `launchctl kickstart -k gui/$(id -u)/com.valkozin.blinkreminder`.
 
 **MediaPipe fails to install.** You are on Python 3.13+. Install Python 3.12 (`brew install

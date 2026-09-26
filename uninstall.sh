@@ -24,7 +24,7 @@ if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$VENV/bin/blink-reminder" ]; the
 fi
 
 # The venv, not the whole of APP_HOME: BLINK_HOME=~ would otherwise delete the home folder.
-rm -rf "$VENV"
+rm -rf "$VENV" "$APP_HOME/Blink Reminder.app"
 rmdir "$APP_HOME" 2>/dev/null || true
 echo "Removed $APP_HOME and the login item."
 
