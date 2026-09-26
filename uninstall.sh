@@ -13,7 +13,9 @@ else
     rm -f "$HOME/Library/LaunchAgents/$LABEL.plist"
 fi
 
-pkill -f "blinkreminder" 2>/dev/null || true
+# Only processes running from our venv: a bare "blinkreminder" also matched an editor or
+# shell sitting in the source folder.
+pkill -f "$VENV/bin/" 2>/dev/null || true
 
 # The command link, but only if it is ours - never someone else's blink-reminder.
 LINK="${BLINK_BIN:-$HOME/.local/bin}/blink-reminder"
@@ -21,7 +23,9 @@ if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$VENV/bin/blink-reminder" ]; the
     rm -f "$LINK"
 fi
 
-rm -rf "$APP_HOME"
+# The venv, not the whole of APP_HOME: BLINK_HOME=~ would otherwise delete the home folder.
+rm -rf "$VENV"
+rmdir "$APP_HOME" 2>/dev/null || true
 echo "Removed $APP_HOME and the login item."
 
 read -r -p "Also delete settings and statistics? [y/N] " reply
