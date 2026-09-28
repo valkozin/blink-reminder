@@ -26,15 +26,29 @@ def is_enabled() -> bool:
     return PLIST_PATH.exists()
 
 
+def _running_from_app() -> bool:
+    """True inside Blink Reminder.app, where sys.executable is the app's own binary."""
+    return bool(getattr(sys, "frozen", False))
+
+
 def _running_from_source() -> bool:
     """True when the package is imported from a checkout rather than site-packages."""
+    if _running_from_app():
+        return False
     return "site-packages" not in str(Path(__file__).resolve())
+
+
+def _program_arguments() -> list[str]:
+    if _running_from_app():
+        # The app binary starts the menu bar app when given no arguments, and has no -m.
+        return [sys.executable]
+    return [sys.executable, "-m", "blinkreminder"]
 
 
 def _plist() -> dict:
     plist = {
         "Label": BUNDLE_ID,
-        "ProgramArguments": [sys.executable, "-m", "blinkreminder"],
+        "ProgramArguments": _program_arguments(),
         "RunAtLoad": True,
         # Restart if it ever crashes, but respect a deliberate Quit.
         "KeepAlive": {"SuccessfulExit": False},

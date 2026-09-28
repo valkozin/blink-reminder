@@ -30,5 +30,8 @@ jobs:
       - name: Terminal control
         run: python tests/test_control.py
 
+      - name: Login item
+        run: python tests/test_autostart.py
+
       # tests/test_menubar.py builds the real menu bar app and needs a logged-in GUI
       # session, which hosted runners do not reliably provide - run it locally.

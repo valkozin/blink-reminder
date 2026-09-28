@@ -276,7 +276,7 @@ python@3.12`) or let `install.sh` use uv, which downloads a matching interpreter
 
 ```bash
 VENV=~/.local/share/blink-reminder/venv          # created by ./install.sh
-for suite in detector config control menubar; do $VENV/bin/python tests/test_$suite.py; done
+for suite in detector config control autostart menubar; do $VENV/bin/python tests/test_$suite.py; done
 $VENV/bin/python -m blinkreminder --verbose      # run straight from this checkout
 ```
 
@@ -285,14 +285,40 @@ Re-run `./install.sh` to push local changes into the installed copy.
 The tests stub out the camera, MediaPipe and the machine itself — screen lock, display sleep and
 keyboard idle time are all faked, and every file the app would write goes to a throwaway
 folder — so they give the same answer on a laptop with the lid shut as on a CI runner, and never
-touch a running copy of the app. GitHub Actions runs the detector, settings and control suites
-on every push; `test_menubar.py` builds the real menu bar app and needs a logged-in GUI session,
+touch a running copy of the app. GitHub Actions runs the detector, settings, control and login item
+suites on every push; `test_menubar.py` builds the real menu bar app and needs a logged-in GUI session,
 so run that one locally.
 
 `blinkreminder/` holds the app: `detector.py` (camera loop and blink logic), `alerts.py` (sound
 and the floating hint), `preview.py` (the framing window), `menubar.py` (the UI), `control.py`
 (the terminal commands), `autostart.py` (launchd agent), `config.py`, `stats.py`, `system.py`,
 `i18n.py`.
+
+### Building a standalone app (experimental)
+
+```bash
+./scripts/build_app.sh
+```
+
+builds `dist/Blink Reminder.app` and a `.dmg` with PyInstaller, in a virtualenv of its own under
+`build/app/`. It is for people who will never open a terminal: Python, MediaPipe and OpenCV all
+travel inside the bundle, a couple of hundred megabytes of it. The bundle leaves out what
+MediaPipe drags in but the face mesh never touches — jax, SciPy, matplotlib, the models for
+hands, poses and segmentation — and the script checks the result by loading the face mesh from
+inside the app before it packs the `.dmg`.
+
+By default the app is signed ad hoc, which only the Mac that built it trusts. To hand it to
+anyone else, sign it with a Developer ID and notarize it:
+
+```bash
+BLINK_CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+BLINK_NOTARY_PROFILE=blink ./scripts/build_app.sh
+```
+
+(create the profile once with `xcrun notarytool store-credentials blink`). The recipe lives in
+`packaging/macos/`. The app and the terminal install share settings, statistics and the login
+item, and only one copy runs at a time: turning on "Start at login" in the app points the login
+item at the app instead. After moving the app, turn it off and on again so the login item follows.
 
 To see what the detector actually sees, record a trace and analyse it:
 

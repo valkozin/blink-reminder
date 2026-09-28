@@ -1,0 +1,2 @@
+/* Shown by macOS when Blink Reminder first asks for the camera. */
+"NSCameraUsageDescription" = "Blink Reminder watches your eyelids to count blinks. Frames are analysed on this Mac and are never saved or sent anywhere.";

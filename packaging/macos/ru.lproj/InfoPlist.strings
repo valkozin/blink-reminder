@@ -1,0 +1,2 @@
+/* Shown by macOS when Blink Reminder first asks for the camera. */
+"NSCameraUsageDescription" = "Blink Reminder следит за веками, чтобы считать моргания. Кадры обрабатываются на этом Mac и никогда не сохраняются и никуда не отправляются.";
