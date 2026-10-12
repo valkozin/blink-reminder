@@ -104,6 +104,7 @@ Click the eye in the menu bar:
 | **Next to the menu bar icon** | Nothing, the blink rate, or a live blink counter (it rolls over at a hundred to keep the menu bar narrow; the running total is in the menu) |
 | **Pause when keyboard is idle** | Off by default — reading without touching the keyboard still counts as screen time |
 | **Pause when screen is locked** | On by default |
+| **Pause on battery power** | Off by default — stops watching (and frees the camera) while the Mac is unplugged |
 | **Start at login** | Installs/removes the launchd agent |
 | **Today’s statistics…** | Screen time, blinks, average rate, reminders |
 

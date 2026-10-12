@@ -27,6 +27,7 @@ import blinkreminder.system as system_module
 system_module.screen_is_locked = lambda: False
 system_module.display_is_asleep = lambda: False
 system_module.idle_seconds = lambda: 0.0
+system_module.on_battery = lambda: False
 
 FRAME = np.full((480, 480, 3), 90, dtype=np.uint8)  # square, so the EAR aspect fix is a no-op
 _RNG = np.random.default_rng(7)
@@ -484,6 +485,20 @@ def test_failed_probes_are_counted_and_reset():
     assert detector._failed_probes == 1
     _feed(detector, mesh, 0.30, 1.0, start=now)                 # found again
     assert detector._failed_probes == 0
+
+
+def test_battery_pause_follows_the_setting_and_the_plug():
+    detector, _, _, _ = _detector()
+    original = system_module.on_battery
+    system_module.on_battery = lambda: True
+    try:
+        assert detector._blocking_state() is None  # off by default
+        detector.config.pause_on_battery = True
+        assert detector._blocking_state() == State.ON_BATTERY
+        system_module.on_battery = lambda: False
+        assert detector._blocking_state() is None
+    finally:
+        system_module.on_battery = original
 
 
 def test_a_locked_screen_stops_watching_and_frees_the_camera():

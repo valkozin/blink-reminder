@@ -24,6 +24,7 @@ ICONS = {
     State.PAUSED: "⏸",
     State.LOCKED: "⏸",
     State.IDLE: "⏸",
+    State.ON_BATTERY: "⏸",
     State.ERROR: "⚠️",
     State.NO_IMAGE: "⚠️",
 }
@@ -145,6 +146,7 @@ class BlinkReminderApp(rumps.App):
 
         self.idle_item = rumps.MenuItem(t("pause_when_idle"), callback=self.on_toggle_idle)
         self.lock_item = rumps.MenuItem(t("pause_when_locked"), callback=self.on_toggle_lock)
+        self.battery_item = rumps.MenuItem(t("pause_on_battery"), callback=self.on_toggle_battery)
         self.login_item = rumps.MenuItem(t("start_at_login"), callback=self.on_toggle_login)
 
         self.menu = [
@@ -164,6 +166,7 @@ class BlinkReminderApp(rumps.App):
             None,
             self.idle_item,
             self.lock_item,
+            self.battery_item,
             self.login_item,
             None,
             rumps.MenuItem(t("stats"), callback=self.on_stats),
@@ -192,6 +195,7 @@ class BlinkReminderApp(rumps.App):
             item.state = int(index == self.config.camera_index)
         self.idle_item.state = int(self.config.pause_when_idle)
         self.lock_item.state = int(self.config.pause_when_locked)
+        self.battery_item.state = int(self.config.pause_on_battery)
         self.login_item.state = int(autostart.is_enabled())
 
     # ------------------------------------------------------------------ callbacks
@@ -291,6 +295,10 @@ class BlinkReminderApp(rumps.App):
 
     def on_toggle_lock(self, _=None) -> None:
         self.config.pause_when_locked = not self.config.pause_when_locked
+        self._save()
+
+    def on_toggle_battery(self, _=None) -> None:
+        self.config.pause_on_battery = not self.config.pause_on_battery
         self._save()
 
     def on_toggle_login(self, _=None) -> None:

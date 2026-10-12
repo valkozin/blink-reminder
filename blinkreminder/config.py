@@ -64,6 +64,7 @@ class Config:
     absence_timeout: float = 90.0   # no face for this long -> release camera, stand by
     pause_when_locked: bool = True
     pause_when_idle: bool = False   # also pause on no keyboard/mouse activity
+    pause_on_battery: bool = False  # also pause while the Mac runs on its battery
     idle_threshold: float = 300.0
 
     # --- interface ---

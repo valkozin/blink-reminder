@@ -69,6 +69,7 @@ class State:
     PAUSED = "paused"
     LOCKED = "locked"
     IDLE = "idle"
+    ON_BATTERY = "on_battery"
     ERROR = "error"
     NO_IMAGE = "no_image"       # camera open, frames black or frozen: reopening it
 
@@ -419,6 +420,8 @@ class BlinkDetector:
             return State.LOCKED
         if self.config.pause_when_idle and system.idle_seconds() > self.config.idle_threshold:
             return State.IDLE
+        if self.config.pause_on_battery and system.on_battery():
+            return State.ON_BATTERY
         return None
 
     def _standby_should_wake(self, now: float) -> bool:

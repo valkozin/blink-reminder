@@ -121,6 +121,32 @@ def list_cameras() -> list[str]:
         return []
 
 
+_battery_cache = (0.0, False)
+
+
+def on_battery() -> bool:
+    """True while a laptop is running on its battery (False on AC, or when unknown)."""
+    global _battery_cache
+    if not IS_MAC:
+        return False
+    import subprocess
+    import time
+
+    checked, value = _battery_cache
+    if time.monotonic() - checked < 10.0:  # the loop asks every second; power rarely changes
+        return value
+    try:
+        out = subprocess.run(
+            ["/usr/bin/pmset", "-g", "batt"],
+            capture_output=True, text=True, timeout=3, check=False,
+        ).stdout
+        value = "Battery Power" in out.split("\n", 1)[0]
+    except Exception:  # pragma: no cover - defensive
+        value = False
+    _battery_cache = (time.monotonic(), value)
+    return value
+
+
 def lid_is_closed() -> bool:
     """True when a laptop's lid is shut (its built-in camera is then facing the keyboard)."""
     if not IS_MAC:
